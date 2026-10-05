@@ -32,6 +32,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _isUpdatingFromEngine;
     private bool _disposed;
 
+    /// <summary>
+    /// 静音与音量滑块的联动规则。见 <see cref="MuteVolumeLink"/>。
+    /// 放在 Core 里是为了让「归零 / 还原 / 以用户拖动为准」这三条分支能被单测覆盖。
+    /// </summary>
+    private readonly MuteVolumeLink _muteLink = new();
+
     public MainViewModel(
         IPlaybackService playback,
         IMetadataReader metadataReader,
@@ -127,8 +133,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     };
 
     /// <summary>音量的文字说明，用于提示条。</summary>
+    /// <remarks>
+    /// 静音时滑块已经归零，此时再显示「音量 0%」会让人以为音量真的被改掉了，
+    /// 因此改为提示原本的音量，说明一键恢复会回到哪里。
+    /// </remarks>
     public string VolumeText => IsMuted
-        ? $"已静音（音量 {Volume}%，按 Ctrl+M 解除）"
+        ? $"已静音（原音量 {_muteLink.VolumeBeforeMute}%，按 Ctrl+M 恢复）"
         : $"音量 {Volume}%";
 
     /// <summary>主播放键的图标：播放中显示暂停条，否则显示播放三角。</summary>
@@ -295,6 +305,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // 调音量会自动解除静音，引擎通过这个事件把结果告诉界面。
         // 不订阅它的话，图标会停在静音状态，与实际声音不符。
         IsMuted = muted;
+
+        // 静音时滑块归零，解除时回到静音前的位置。
+        // 放在 IsMuted 之后：Volume 的 setter 会依据静音状态决定图标档位，
+        // 顺序反了图标会先按旧状态画一次。
+        //
+        // 这里刻意走 _isUpdatingFromEngine，不把 0 写进引擎：
+        // 静音靠的是引擎的 Mute 开关，音量值应当保持原样，
+        // 否则引擎侧的音量会被真的改成 0，解除静音就找不回原值了。
+        if (_muteLink.OnMuteChanged(muted, Volume) is int target && target != Volume)
+        {
+            _isUpdatingFromEngine = true;
+            Volume = target;
+            _isUpdatingFromEngine = false;
+        }
+
+        // 提示文字里带着静音前的音量，归零与还原之后都必须重算。
+        OnPropertyChanged(nameof(VolumeText));
     });
 
     private void OnStateChanged(object? sender, PlayerState state) => Post(() =>
