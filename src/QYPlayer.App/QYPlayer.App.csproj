@@ -18,6 +18,14 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
+
+    <!--
+      应用图标与 Windows 资源属性。图标由 build\make-icon.ps1 生成，
+      同时作用于 exe、任务栏、开始菜单快捷方式。
+    -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AssemblyTitle>QY Player</AssemblyTitle>
+    <Description>清玉播放器 —— 支持本地音乐播放与加密格式插件扩展的桌面播放器</Description>
   </PropertyGroup>
 
   <ItemGroup>

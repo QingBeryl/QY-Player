@@ -83,6 +83,11 @@ public partial class App : Application
         {
             // 显式指向视频库的原生目录，避免打包后探测失败。
             NativeLibraryDirectory = Path.Combine(AppPaths.BaseDirectory, "libvlc", "win-x64"),
+
+            // 安装到 Program Files 时程序目录不可写，无法建立 portable 目录，
+            // 此时只能让 libVLC 用它的默认位置，否则初始化会因权限失败。
+            UsePortableMode = AppPaths.PortableVlcDirectory is not null,
+            PortableModeDirectory = AppPaths.PortableVlcDirectory,
         });
 
         builder.Services.AddSingleton<IPlaybackService, VlcPlaybackService>();

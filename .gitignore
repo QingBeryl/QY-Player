@@ -10,6 +10,13 @@ publish/
 *.userosscache
 *.sln.docstates
 
+## 每个版本的最终分发产物（便捷版 zip 与安装版 setup.exe）。
+## 按版本归档在 dist\v<版本>\ 下，历史版本一律保留，不随构建清理。
+## 但单个版本约 178MB，全部塞进 git 会让仓库迅速膨胀且无法回收，
+## 因此不纳入版本控制——源码、打包脚本与版本号才是需要追踪的东西，
+## 产物本身随时可用 build\publish.ps1 重新生成。
+dist/
+
 ## Visual Studio / Rider / VS Code
 .vs/
 .idea/
