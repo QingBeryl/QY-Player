@@ -41,6 +41,18 @@ public interface IPlaybackService : IDisposable
     /// <summary>播放失败。参数为面向用户的失败原因。</summary>
     event EventHandler<string>? PlaybackFailed;
 
+    /// <summary>
+    /// 音量变化。无论来自用户拖动滑块还是引擎自身的修正（例如静音时
+    /// 音量被夹到 0）都会触发，界面据此保持与引擎一致。
+    /// </summary>
+    event EventHandler<int>? VolumeChanged;
+
+    /// <summary>
+    /// 静音状态变化。调音量会自动解除静音，界面不能只依赖自己发起的调用来判断，
+    /// 否则图标会与实际状态脱节。
+    /// </summary>
+    event EventHandler<bool>? MuteChanged;
+
     Task PlayAsync(Track track, CancellationToken cancellationToken = default);
 
     void Pause();

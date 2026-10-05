@@ -95,6 +95,8 @@ public sealed class VlcPlaybackService : IPlaybackService
     public event EventHandler<TimeSpan>? DurationChanged;
     public event EventHandler? PlaybackEnded;
     public event EventHandler<string>? PlaybackFailed;
+    public event EventHandler<int>? VolumeChanged;
+    public event EventHandler<bool>? MuteChanged;
 
     public async Task PlayAsync(Track track, CancellationToken cancellationToken = default)
     {
@@ -118,7 +120,10 @@ public sealed class VlcPlaybackService : IPlaybackService
             catch (Exception ex)
             {
                 // 格式不受支持、插件缺失、文件不存在等，都走这里。
+                // 必须广播曲目已清空：界面据此才把标题、封面、按钮可用性收回，
+                // 否则会停在上一首的信息上，看起来像"点了没反应"。
                 _currentTrack = null;
+                CurrentTrackChanged?.Invoke(this, null);
                 SetState(PlayerState.Error);
                 RaiseFailed(ex.Message);
                 return;
@@ -133,6 +138,7 @@ public sealed class VlcPlaybackService : IPlaybackService
             if (media is null)
             {
                 _currentTrack = null;
+                CurrentTrackChanged?.Invoke(this, null);
                 SetState(PlayerState.Error);
                 RaiseFailed($"无法打开媒体：{track.DisplayTitle}");
                 return;
@@ -189,13 +195,40 @@ public sealed class VlcPlaybackService : IPlaybackService
             case PlayerState.Playing:
                 Pause();
                 break;
+
             case PlayerState.Paused:
                 Resume();
                 break;
+
             default:
-                // 停止或出错状态下没有可切换的媒体，交由上层决定下一步。
+                // 停止、播放结束或出错后的状态。此时按键的合理语义是
+                // 「从头再放一遍」，否则按钮看着能点、按下去却什么都不发生。
+                Restart();
                 break;
         }
+    }
+
+    /// <summary>
+    /// 从头重新播放当前曲目。没有已加载的媒体时不做任何事。
+    /// </summary>
+    private void Restart()
+    {
+        if (_currentTrack is null || _mediaPlayer.Media is null)
+        {
+            return;
+        }
+
+        SetState(PlayerState.Opening);
+        _mediaPlayer.Position = 0f;
+
+        if (!_mediaPlayer.Play())
+        {
+            SetState(PlayerState.Error);
+            RaiseFailed($"播放失败：{_currentTrack.DisplayTitle}");
+            return;
+        }
+
+        SetState(PlayerState.Playing);
     }
 
     public void Stop()
@@ -228,8 +261,17 @@ public sealed class VlcPlaybackService : IPlaybackService
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        _volume = Math.Clamp(volume, 0, 100);
+        var clamped = Math.Clamp(volume, 0, 100);
+        var changed = clamped != _volume;
+
+        _volume = clamped;
         _mediaPlayer.Volume = _volume;
+
+        // 值没变就不广播，避免界面双向绑定形成回声。
+        if (changed)
+        {
+            VolumeChanged?.Invoke(this, _volume);
+        }
 
         // 用户主动调音量视为解除静音，符合大多数播放器的习惯。
         if (_volume > 0 && _isMuted)
@@ -242,8 +284,14 @@ public sealed class VlcPlaybackService : IPlaybackService
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        if (_isMuted == muted)
+        {
+            return;
+        }
+
         _isMuted = muted;
         _mediaPlayer.Mute = muted;
+        MuteChanged?.Invoke(this, _isMuted);
     }
 
     /// <summary>
@@ -320,7 +368,15 @@ public sealed class VlcPlaybackService : IPlaybackService
         _mediaPlayer.TimeChanged += (_, e) =>
             PositionChanged?.Invoke(this, TimeSpan.FromMilliseconds(e.Time));
 
-        _mediaPlayer.EndReached += (_, _) => PlaybackEnded?.Invoke(this, EventArgs.Empty);
+        _mediaPlayer.EndReached += (_, _) =>
+        {
+            // 播完要把状态退回 Stopped，否则引擎仍自称 Playing，
+            // 再按播放键会走进「暂停」分支，表现成按了没反应。
+            // 注意这里不清空 _currentTrack：曲目信息应当留在界面上，
+            // 再按播放键才能从头重放，而不是变成不可点的灰按钮。
+            SetState(PlayerState.Stopped);
+            PlaybackEnded?.Invoke(this, EventArgs.Empty);
+        };
 
         _mediaPlayer.EncounteredError += (_, _) =>
         {

@@ -51,6 +51,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _uiContext = SynchronizationContext.Current;
 
         _volume = _playback.Volume;
+        _isMuted = _playback.IsMuted;
         _statusText = "请选择要播放的音频文件";
 
         Subscribe();
@@ -81,7 +82,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _isPaused;
 
-    /// <summary>是否已加载媒体。决定播放控制是否可用。</summary>
+    /// <summary>
+    /// 是否已加载曲目。决定播放控制是否可用。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不看是否正在播放：播完之后曲目仍在，用户按播放键应当能重放，
+    /// 按钮不该变灰。只有停止（清空曲目）或播放失败才回到不可用。
+    /// </remarks>
     [ObservableProperty]
     private bool _hasMedia;
 
@@ -102,6 +109,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public string PositionText => FormatTime(TimeSpan.FromSeconds(PositionSeconds));
 
     public string DurationText => FormatTime(TimeSpan.FromSeconds(DurationSeconds));
+
+    /// <summary>
+    /// 音量图标。静音或音量为 0 时显示带叉的喇叭，其余按音量大小递进。
+    /// </summary>
+    /// <remarks>
+    /// 档位的判定放在 <see cref="VolumeIconSelector"/>，这里只做「档位 → 字形」的映射。
+    /// 之所以不用 XAML 触发器，是因为要同时看静音状态和音量值才能决定画哪个图标，
+    /// 单靠属性触发器表达不了这种组合，而本地值又会压住样式触发器导致图标恒定不变。
+    /// </remarks>
+    public string VolumeGlyph => VolumeIconSelector.Select(Volume, IsMuted) switch
+    {
+        VolumeIconLevel.Muted => "\uE74F",  // Mute：喇叭带叉
+        VolumeIconLevel.Low => "\uE993",    // Volume1：一格
+        VolumeIconLevel.Medium => "\uE994", // Volume2：两格
+        _ => "\uE995",                      // Volume3：三格
+    };
+
+    /// <summary>音量的文字说明，用于提示条。</summary>
+    public string VolumeText => IsMuted
+        ? $"已静音（音量 {Volume}%，按 Ctrl+M 解除）"
+        : $"音量 {Volume}%";
+
+    /// <summary>主播放键的图标：播放中显示暂停条，否则显示播放三角。</summary>
+    public string PlayPauseGlyph => IsPlaying ? "\uE769" : "\uE768";
+
+    /// <summary>主播放键的提示文字，随状态在「播放」与「暂停」之间切换。</summary>
+    public string PlayPauseHint => IsPlaying ? "暂停 (空格)" : "播放 (空格)";
 
     /// <summary>拖动进度条时不把中间值写回引擎，避免跳转抖动与性能损耗。</summary>
     public bool IsSeekDragging { get; set; }
@@ -187,12 +221,29 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnVolumeChanged(int value)
     {
+        // 图标的格数、提示文字都跟着音量走，必须显式通知，
+        // 否则只更新了滑块位置，喇叭图标还停在上一个档位。
+        OnPropertyChanged(nameof(VolumeGlyph));
+        OnPropertyChanged(nameof(VolumeText));
+
         if (_isUpdatingFromEngine)
         {
             return;
         }
 
         _playback.SetVolume(value);
+    }
+
+    partial void OnIsMutedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(VolumeGlyph));
+        OnPropertyChanged(nameof(VolumeText));
+    }
+
+    partial void OnIsPlayingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PlayPauseGlyph));
+        OnPropertyChanged(nameof(PlayPauseHint));
     }
 
     partial void OnPositionSecondsChanged(double value) => OnPropertyChanged(nameof(PositionText));
@@ -207,6 +258,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _playback.DurationChanged += OnDurationChanged;
         _playback.PlaybackEnded += OnPlaybackEnded;
         _playback.PlaybackFailed += OnPlaybackFailed;
+        _playback.VolumeChanged += OnVolumeChangedFromEngine;
+        _playback.MuteChanged += OnMuteChangedFromEngine;
     }
 
     private void Unsubscribe()
@@ -217,20 +270,48 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _playback.DurationChanged -= OnDurationChanged;
         _playback.PlaybackEnded -= OnPlaybackEnded;
         _playback.PlaybackFailed -= OnPlaybackFailed;
+        _playback.VolumeChanged -= OnVolumeChangedFromEngine;
+        _playback.MuteChanged -= OnMuteChangedFromEngine;
     }
+
+    /// <summary>
+    /// 引擎侧的音量变化。会走这里的情况不只用户拖动滑块：
+    /// 静音时若引擎把音量归零，界面也要跟着动。
+    /// </summary>
+    private void OnVolumeChangedFromEngine(object? sender, int volume) => Post(() =>
+    {
+        if (Volume == volume)
+        {
+            return;
+        }
+
+        _isUpdatingFromEngine = true;
+        Volume = volume;
+        _isUpdatingFromEngine = false;
+    });
+
+    private void OnMuteChangedFromEngine(object? sender, bool muted) => Post(() =>
+    {
+        // 调音量会自动解除静音，引擎通过这个事件把结果告诉界面。
+        // 不订阅它的话，图标会停在静音状态，与实际声音不符。
+        IsMuted = muted;
+    });
 
     private void OnStateChanged(object? sender, PlayerState state) => Post(() =>
     {
         IsPlaying = state == PlayerState.Playing;
         IsPaused = state == PlayerState.Paused;
-        HasMedia = state is PlayerState.Playing or PlayerState.Paused or PlayerState.Opening;
 
+        // HasMedia 不在这里推导：它表示「是否已加载曲目」，播完之后曲目还在，
+        // 按播放键应当能重放。若跟着状态走，播完就会变灰且再也点不动。
         StatusText = state switch
         {
             PlayerState.Opening => "正在打开…",
             PlayerState.Playing => "正在播放",
             PlayerState.Paused => "已暂停",
-            PlayerState.Stopped => HasMedia ? "已停止" : StatusText,
+            // 走到 Stopped 只有两种可能：用户停止，或自然播完
+            //（后者紧接着会被 PlaybackEnded 覆盖成「播放结束」）。
+            PlayerState.Stopped => "已停止",
             PlayerState.Error => "播放出错",
             _ => StatusText,
         };
@@ -239,6 +320,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void OnCurrentTrackChanged(object? sender, Track? track) => Post(() =>
     {
         CurrentTrack = track;
+
+        // 曲目清空（停止）或装载（开始播放）都走这里，是 HasMedia 的唯一来源。
+        HasMedia = track is not null;
 
         if (track is null)
         {
@@ -285,8 +369,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void OnPlaybackFailed(object? sender, string message) => Post(() =>
     {
+        // HasMedia 不在这里改：它由曲目事件统一维护。引擎在失败时已广播
+        // 曲目清空，这里再清一次只会造成两个来源互相打架。
         StatusText = message;
-        HasMedia = false;
         IsPlaying = false;
         IsPaused = false;
     });

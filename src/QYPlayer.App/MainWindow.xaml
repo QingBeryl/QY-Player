@@ -293,49 +293,40 @@
                         ToolTip="停止 (Ctrl+S)">
                     <TextBlock Text="&#x25A0;" FontSize="14" />
                 </Button>
-
-                <Button Style="{StaticResource TransportButton}" Margin="10,0,0,0"
-                        Command="{Binding ToggleMuteCommand}"
-                        ToolTip="静音开关 (Ctrl+M)">
-                    <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="16" Text="&#xE767;">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsMuted}" Value="True">
-                                        <Setter Property="Text" Value="&#xE74F;" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </Button>
             </StackPanel>
 
             <Button Grid.Column="1" Style="{StaticResource PrimaryTransportButton}"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Command="{Binding TogglePlayPauseCommand}"
                     IsEnabled="{Binding HasMedia}"
-                    ToolTip="播放 / 暂停 (空格)">
-                <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="22" Text="&#xE768;">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
-                                    <Setter Property="Text" Value="&#xE769;" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
+                    ToolTip="{Binding PlayPauseHint}">
+                <!--
+                  图标交给 ViewModel 决定：这里不能再用「本地 Text 值 + 样式触发器」，
+                  因为本地值的优先级高于触发器，触发器永远不生效，图标会恒定不变。
+                -->
+                <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="22"
+                           Text="{Binding PlayPauseGlyph}" />
             </Button>
 
+            <!--
+              静音键与音量滑块合为一组：喇叭图标既显示当前状态、又是静音开关，
+              滑块紧随其后调节音量。旧版本拆成两个隔开的控件，
+              图标既不变、位置又和音量无关，看起来像两个不相关的按钮。
+            -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="音量" FontSize="12" Foreground="#FF6E7683"
-                           VerticalAlignment="Center" Margin="0,0,10,0" />
-                <Slider Width="130" Style="{StaticResource PlayerSlider}"
+                <Button Style="{StaticResource TransportButton}"
+                        Command="{Binding ToggleMuteCommand}"
+                        ToolTip="{Binding VolumeText}">
+                    <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="16"
+                               Text="{Binding VolumeGlyph}" />
+                </Button>
+
+                <Slider Width="130" Margin="10,0,0,0"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource PlayerSlider}"
                         Minimum="0" Maximum="100"
                         Value="{Binding Volume, Mode=TwoWay}"
-                        ToolTip="音量" />
+                        ToolTip="{Binding VolumeText}" />
             </StackPanel>
         </Grid>
     </Grid>
