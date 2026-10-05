@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QYPlayer.Audio</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <!--
+      只提供 libVLC 原生库，不参与编译。
+      VideoLAN.LibVLC.Windows 会按 RuntimeIdentifier 把 win-x64 的 libvlc 复制到输出目录，
+      这是 Windows 上部署 libVLC 的标准做法。
+    -->
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QYPlayer.Core\QYPlayer.Core.csproj" />
+  </ItemGroup>
+
+</Project>

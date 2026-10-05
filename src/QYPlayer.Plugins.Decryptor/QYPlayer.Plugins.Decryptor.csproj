@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QYPlayer.Plugins.Decryptor</RootNamespace>
+
+    <!--
+      解密插件（方案 B）。
+
+      分发约定：本项目的产物不随主程序打包，用户如需解密能力，
+      需自行编译并把 DLL 放入主程序目录下的 plugins/ 子目录。
+      主程序在未安装本插件时，行为与不带解密能力的播放器完全一致。
+
+      范围约定：只支持密钥自包含于文件自身的格式（NCM / KGM / KWM）。
+      不实现任何需要读取第三方程序数据库、注入进程或联网获取密钥的方案。
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      只引用契约程序集，不引用 Core，使插件可以脱离主程序独立编译。
+      主程序侧会保证契约程序集由宿主统一提供，避免类型身份不一致。
+    -->
+    <ProjectReference Include="..\QYPlayer.Plugin.Abstractions\QYPlayer.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

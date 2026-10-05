@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QYPlayer.Plugin.Abstractions</RootNamespace>
+
+    <!--
+      契约程序集刻意不引用任何其他 QYPlayer 项目：
+      它必须能被主程序与插件共同引用，因此不能有反向依赖。
+    -->
+  </PropertyGroup>
+
+</Project>

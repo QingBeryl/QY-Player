@@ -1,0 +1,62 @@
+## 构建产物
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.swp
+*~
+
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+!packages/.gitkeep
+
+## 应用运行时数据（曲库、缓存、日志、插件）
+## 这些目录在本地运行时会生成，不纳入版本控制
+/data/
+/cache/
+/plugins/*
+!/plugins/.gitkeep
+
+## libVLC 便携模式目录：由程序在启动时创建，用于承接 libVLC 的配置与封面缓存，
+## 使程序不写 %APPDATA%\vlc。属于运行时产物，不纳入版本控制。
+portable/
+
+## 本地测试用音视频资源
+## 仅作开发期验证之用，多为受版权保护的商业作品，不纳入版本控制。
+## 需要时自行放入根目录，程序与测试会直接使用。
+*.mp3
+*.flac
+*.wav
+*.m4a
+*.ape
+*.ogg
+
+## 测试与覆盖率
+[Tt]est[Rr]esult*/
+coverage/
+*.coverage
+*.coveragexml
+
+## 操作系统
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+## 发布包
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle

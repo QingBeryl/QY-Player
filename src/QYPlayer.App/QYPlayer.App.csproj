@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>QYPlayer.App</RootNamespace>
+
+    <!-- 产物名不带 App 后缀，用户看到的是 QYPlayer.exe。 -->
+    <AssemblyName>QYPlayer</AssemblyName>
+
+    <!--
+      libVLC 原生库只有 x64 版本，程序必须按 x64 生成；
+      RuntimeIdentifier 同时决定 VideoLAN.LibVLC.Windows 把原生库复制到
+      libvlc\win-x64 的布局，因此这里必须显式指定。
+    -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QYPlayer.Core\QYPlayer.Core.csproj" />
+    <ProjectReference Include="..\QYPlayer.Audio\QYPlayer.Audio.csproj" />
+    <ProjectReference Include="..\QYPlayer.Metadata\QYPlayer.Metadata.csproj" />
+    <ProjectReference Include="..\QYPlayer.Data\QYPlayer.Data.csproj" />
+  </ItemGroup>
+
+</Project>

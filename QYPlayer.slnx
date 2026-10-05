@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/QYPlayer.App/QYPlayer.App.csproj" />
+    <Project Path="src/QYPlayer.Audio/QYPlayer.Audio.csproj" />
+    <Project Path="src/QYPlayer.Core/QYPlayer.Core.csproj" />
+    <Project Path="src/QYPlayer.Data/QYPlayer.Data.csproj" />
+    <Project Path="src/QYPlayer.Metadata/QYPlayer.Metadata.csproj" />
+    <Project Path="src/QYPlayer.Plugin.Abstractions/QYPlayer.Plugin.Abstractions.csproj" />
+    <Project Path="src/QYPlayer.Plugins.Decryptor/QYPlayer.Plugins.Decryptor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/QYPlayer.Tests/QYPlayer.Tests.csproj" />
+  </Folder>
+</Solution>

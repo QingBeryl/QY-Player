@@ -1,0 +1,11 @@
+<Application x:Class="QYPlayer.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QYPlayer.App">
+    <!--
+      刻意不使用 StartupUri：主窗口需要从依赖注入容器取得 ViewModel，
+      因此由 App.OnStartup 手动创建并注入 DataContext。
+    -->
+    <Application.Resources>
+    </Application.Resources>
+</Application>
