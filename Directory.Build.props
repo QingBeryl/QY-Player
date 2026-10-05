@@ -11,4 +11,18 @@
     <Copyright>Copyright (c) 2026 QY Player</Copyright>
   </PropertyGroup>
 
+  <!--
+    VideoLAN.LibVLC.Windows 会按 Platform 判断要复制哪些架构的原生库，
+    默认 Platform 为 AnyCPU 时三套全带上，合计超过 300MB（x64 106MB +
+    x86 103MB + arm64 90MB），而本程序只跑 x64。
+    这两个开关来自该包的 build/VideoLAN.LibVLC.Windows.targets。
+    必须放在 Directory.Build.props 而不是某个具体工程里：libVLC 是通过
+    QYPlayer.Audio 间接引入的，那些 Content 会随项目引用传递到最终输出，
+    只在 App 工程里关是拦不住的，每个参与评估的工程都得关。
+  -->
+  <PropertyGroup>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+  </PropertyGroup>
+
 </Project>
