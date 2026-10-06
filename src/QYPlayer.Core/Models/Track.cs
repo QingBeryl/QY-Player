@@ -63,4 +63,19 @@ public sealed class Track
     [NotMapped]
     public string DisplayAlbum =>
         string.IsNullOrWhiteSpace(Album) ? "未知专辑" : Album;
+
+    /// <summary>
+    /// 时长的展示文本，例如 03:45；超过一小时才带上小时位。
+    /// </summary>
+    /// <remarks>
+    /// 与引擎回传的位置文本用同一套排版（见 MainViewModel 的时间格式化），
+    /// 免得列表里的时长和进度条上的时长长得不一样。
+    /// 用 <see cref="TimeSpan"/> 的原生格式做不到这一点：
+    /// "mm\:ss" 在超过一小时时会把分钟截断到 0-59，而 "hh\:mm\:ss" 又会让
+    /// 短曲子也顶上两个前导零。
+    /// </remarks>
+    [NotMapped]
+    public string DurationText => Duration.TotalHours >= 1
+        ? $"{(int)Duration.TotalHours:00}:{Duration.Minutes:00}:{Duration.Seconds:00}"
+        : $"{Duration.Minutes:00}:{Duration.Seconds:00}";
 }

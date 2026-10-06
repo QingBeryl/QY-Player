@@ -136,6 +136,12 @@ public partial class App : Application
         // 因此这里不需要知道标签是用 TagLib 读的。
         builder.Services.AddSingleton<LibraryScanner>();
 
+        // 增量比对器与运行期监听器都是无状态的长生命周期对象，
+        // 前者被启动兜底与监听回调共用（8.2 要求两条路径走同一套判断），
+        // 后者持有 FileSystemWatcher，只有一份才能保证防抖窗口是全局的。
+        builder.Services.AddSingleton<LibrarySynchronizer>();
+        builder.Services.AddSingleton<LibraryWatcher>();
+
         builder.Services.AddSingleton<TrackSourceResolver>(sp =>
             new TrackSourceResolver(sp.GetRequiredService<IPluginHost>().LoadedPlugins));
 

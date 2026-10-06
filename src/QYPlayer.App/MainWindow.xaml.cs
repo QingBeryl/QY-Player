@@ -9,6 +9,11 @@ using QYPlayer.App.ViewModels;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
+// 用别名而不是 using QYPlayer.Core.Models：
+// 本项目已经引入了 System.Windows.Controls.Primitives（进度条的 Thumb / Track 都在那里），
+// 而它也有一个 Track 类型，直接 using 会让 Track 变成二义引用。
+using Track = QYPlayer.Core.Models.Track;
+
 namespace QYPlayer.App;
 
 /// <summary>
@@ -21,6 +26,12 @@ namespace QYPlayer.App;
 /// </remarks>
 public partial class MainWindow : FluentWindow
 {
+    /// <summary>
+    /// 曲库加载的取消源。窗口关闭时取消，避免后台扫描在退出过程中继续往
+    /// 已销毁的界面上写属性。
+    /// </summary>
+    private readonly CancellationTokenSource _libraryLoadCancellation = new();
+
     public MainWindow()
     {
         InitializeComponent();
@@ -60,6 +71,88 @@ public partial class MainWindow : FluentWindow
         // 必须在窗口 Loaded 之后调用，否则取不到窗口句柄。
         // 传入的材质与 XAML 上的 WindowBackdropType 保持一致。
         SystemThemeWatcher.Watch(this, WindowBackdropType.Mica);
+
+        StartLibraryLoad();
+    }
+
+    /// <summary>
+    /// 窗口出现之后再开始加载曲库。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不放进 ViewModel 的构造函数：那会在窗口显示之前同步发起扫描，
+    /// 曲库大时窗口要等好几秒才出现（2.3 要求 2 秒内可交互）。
+    /// 这里用火忘方式启动，让界面先出来、曲库随后填进去。
+    ///
+    /// 异常在 ViewModel 内部已经转成了状态栏提示，这里只需兜住
+    /// 理论上不该发生的漏网异常，避免后台任务把进程带崩。
+    /// </remarks>
+    private void StartLibraryLoad()
+    {
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        _ = viewModel.InitializeLibraryAsync(_libraryLoadCancellation.Token)
+            .ContinueWith(
+                task => System.Diagnostics.Debug.WriteLine(task.Exception),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// 双击列表中的曲目即播放。
+    /// </summary>
+    /// <remarks>
+    /// 用双击而不是单击：单击要留给「选中」这个动作，
+    /// 用户翻列表时不该碰到哪一首就立刻换歌。
+    ///
+    /// 事件挂在 ListView 上而不是 ItemContainerStyle 里的 EventSetter：
+    /// 列表开了虚拟化（容器会被回收复用），EventSetter 会在容器复用时
+    /// 反复挂上同一处理器，是泄漏与重复触发的常见来源。
+    /// 挂在外层只需一份，再判断双击落点有没有命中某一项即可。
+    /// </remarks>
+    private async void OnTrackListDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        // 双击落在列表容器上时，事件源是 ListBoxItem 或它内部的元素，
+        // 沿视觉树往上找一定能碰到 ListBoxItem。
+        var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+
+        if (item?.DataContext is not Track track)
+        {
+            return;
+        }
+
+        // 命中曲目才标记已处理，让双击列表空白处仍能走默认行为。
+        e.Handled = true;
+
+        await viewModel.PlayTrackCommand.ExecuteAsync(track);
+    }
+
+    /// <summary>沿视觉树向上查找第一个指定类型的祖先。</summary>
+    private static T? FindAncestor<T>(DependencyObject? node)
+        where T : DependencyObject
+    {
+        while (node is not null)
+        {
+            if (node is T match)
+            {
+                return match;
+            }
+
+            // 只有 Visual 才有父级可走；其它类型（如文档内的 Run）到此为止。
+            node = node is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(node)
+                : null;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -79,7 +172,22 @@ public partial class MainWindow : FluentWindow
             SystemThemeWatcher.UnWatch(this);
         }
 
+        // 取消可能还在跑的曲库扫描，让退出路径不被后台任务拖住。
+        _libraryLoadCancellation.Cancel();
+
         base.OnClosing(e);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        // ViewModel 持有监听器与播放事件订阅，窗口关闭时一并释放。
+        // 用 GetService 会绕过容器生命周期，因此这里直接对 DataContext 下手：
+        // MainViewModel 注册为单例，释放它等于释放这一整套订阅。
+        (DataContext as IDisposable)?.Dispose();
+
+        _libraryLoadCancellation.Dispose();
+
+        base.OnClosed(e);
     }
 
     private void OnWindowDragOver(object sender, DragEventArgs e)

@@ -184,11 +184,17 @@ public sealed class LibraryScanner
     }
 
     /// <summary>
-    /// 规范化根目录：取绝对路径、去掉不存在的、去掉重复的，
-    /// 并丢掉被别的根目录覆盖的子目录——否则子目录里的文件会被扫两遍。
+    /// 把目录字符串规范化为绝对路径：去空白、去尾部反斜杠、忽略大小写去重。
     /// </summary>
-    private static List<string> NormalizeRoots(IEnumerable<string> directories)
+    /// <remarks>
+    /// 不做存在性检查，因此调用方可以拿它来对照「用户声明了哪些目录」
+    /// 与「实际能扫到哪些目录」——曲库同步需要这个差别来判断
+    /// 「是文件真的被删了」还是「盘没接上」。
+    /// </remarks>
+    public static IReadOnlyList<string> NormalizePaths(IEnumerable<string> directories)
     {
+        ArgumentNullException.ThrowIfNull(directories);
+
         var candidates = new List<string>();
 
         foreach (var directory in directories)
@@ -208,14 +214,41 @@ public sealed class LibraryScanner
                 continue;
             }
 
-            // 目录可能已被删除或不可访问，此时跳过而不是让整次扫描失败。
-            if (!Directory.Exists(fullPath))
-            {
-                continue;
-            }
-
             candidates.Add(TrimSeparator(fullPath));
         }
+
+        return candidates
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>判断文件是否位于给定根目录之下（含根目录本身）。</summary>
+    public static bool IsUnderAnyRoot(string filePath, IReadOnlyList<string> roots)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+        ArgumentNullException.ThrowIfNull(roots);
+
+        foreach (var root in roots)
+        {
+            if (string.Equals(filePath, root, StringComparison.OrdinalIgnoreCase)
+                || IsInside(filePath, root))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 规范化根目录：取绝对路径、去掉不存在的、去掉重复的，
+    /// 并丢掉被别的根目录覆盖的子目录——否则子目录里的文件会被扫两遍。
+    /// </summary>
+    private static List<string> NormalizeRoots(IEnumerable<string> directories)
+    {
+        var candidates = NormalizePaths(directories)
+            .Where(Directory.Exists)
+            .ToList();
 
         var roots = new List<string>();
 

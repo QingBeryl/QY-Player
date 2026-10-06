@@ -4,10 +4,11 @@
                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:models="clr-namespace:QYPlayer.Core.Models;assembly=QYPlayer.Core"
                  mc:Ignorable="d"
                  Title="QY Player"
-                 Height="560" Width="900"
-                 MinHeight="480" MinWidth="720"
+                 Height="700" Width="1120"
+                 MinHeight="560" MinWidth="900"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
                  WindowCornerPreference="Round"
@@ -22,12 +23,15 @@
     -->
 
     <!--
-      M1 阶段的界面只覆盖「单文件播放」这一条主线：
-      打开文件、元数据展示、播放控制、进度与音量。
-      曲库列表、播放队列、歌词在 M2 / M2.5 再补，避免过早把布局写死。
+      从 M2-4 起界面分成左右两栏：左侧是曲库（搜索 + 列表 + 文件夹管理），
+      右侧是当前曲目的播放区。这样「挑歌」与「放歌」在视觉上各占一边，
+      列表再长也不会把播放控件挤出视野。
     -->
 
     <ui:FluentWindow.Resources>
+
+        <!-- 空态提示、扫描进度条的可见性都靠布尔取反/转换，这里备好两个转换器。 -->
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
         <!--
           传输控制按钮：圆形底盘 + 悬停/按下反馈。
@@ -244,6 +248,46 @@
             </Style.Triggers>
         </Style>
 
+        <!--
+          ===== 曲库列表 =====
+
+          列表项自备模板而不是套用 WPF UI 的 ListBoxItem 样式：
+          需要「整行铺满、悬停变浅、选中加深、四角圆润」，而默认样式给了
+          一圈选中边框与内边距，行与行之间看起来会断开，不像一张连续的清单。
+          这里用主题资源键取色，深浅两种主题下都能自动适配。
+
+          为什么在模板里只改背景而不动内容布局：
+          ContentPresenter 必须保留，否则 ItemTemplate 渲染不出来（列表会全空）。
+        -->
+        <Style x:Key="TrackItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,1" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Plate"
+                                CornerRadius="6"
+                                Padding="10,5"
+                                Background="Transparent">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Plate" Property="Background"
+                                        Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Plate" Property="Background"
+                                        Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </ui:FluentWindow.Resources>
 
     <ui:FluentWindow.InputBindings>
@@ -252,6 +296,10 @@
         <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenFileCommand}" />
         <KeyBinding Key="S" Modifiers="Control" Command="{Binding StopCommand}" />
         <KeyBinding Key="M" Modifiers="Control" Command="{Binding ToggleMuteCommand}" />
+        <!-- 切歌用 Ctrl 组合而不是裸方向键：裸方向键要留给列表里的上下选择。 -->
+        <KeyBinding Key="Right" Modifiers="Control" Command="{Binding PlayNextCommand}" />
+        <KeyBinding Key="Left" Modifiers="Control" Command="{Binding PlayPreviousCommand}" />
+        <KeyBinding Key="R" Modifiers="Control" Command="{Binding CycleRepeatModeCommand}" />
     </ui:FluentWindow.InputBindings>
 
     <!--
@@ -292,147 +340,320 @@
             </ui:TitleBar.CenterContent>
         </ui:TitleBar>
 
-        <Grid Grid.Row="1" Margin="28,16,28,22">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
+        <Grid Grid.Row="1" Margin="20,14,20,20">
+            <Grid.ColumnDefinitions>
+                <!-- 左侧曲库固定宽度：列表是「扫读」用的，宽度稳定比自适应更好用。 -->
+                <ColumnDefinition Width="340" MinWidth="260" />
+                <ColumnDefinition Width="*" MinWidth="380" />
+            </Grid.ColumnDefinitions>
 
-            <!-- 中部：封面 + 曲目信息 -->
-            <Grid Grid.Row="0" VerticalAlignment="Center">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+            <!-- ===================== 左栏：曲库 ===================== -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                <!--
-                  封面容器。未提取到封面时底层的音符占位图标会透出来，
-                  因此不需要额外的可见性切换逻辑。
-                -->
-                <Border Grid.Column="0" Width="180" Height="180" CornerRadius="10"
-                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        ClipToBounds="True">
-                    <Grid>
-                        <ui:SymbolIcon Symbol="MusicNote224" FontSize="46"
-                                       Foreground="{DynamicResource TextFillColorDisabledBrush}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        <Image Source="{Binding CurrentTrack.CoverCachePath}" Stretch="UniformToFill" />
-                    </Grid>
-                </Border>
+                <!-- 栏头：标题 + 两个入口按钮 -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="1" Margin="26,0,0,0" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding Artist}" FontSize="16" Margin="0,10,0,0"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding Album}" FontSize="13" Margin="0,6,0,0"
-                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding FormatText}" FontSize="12" Margin="0,14,0,0"
-                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-            </Grid>
+                    <TextBlock Grid.Column="0"
+                               Text="曲库"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
 
-            <!-- 进度条与时间 -->
-            <Grid Grid.Row="1" Margin="0,30,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <TextBlock Grid.Column="0" Text="{Binding PositionText}" FontSize="12"
-                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                           VerticalAlignment="Center" MinWidth="48" />
-
-                <!--
-                  进度条：外观走上面自备的 PlayerSliderStyle（已播放段为蓝色）。
-                  单击跳转不走 XAML 事件，原因见 MainWindow.xaml.cs 里的
-                  OnSeekMouseLeftButtonDown：必须赶在引擎旧位置回包覆盖之前提交，
-                  而且要绕过 Slider 自己对该事件的 Handled 标记。
-                -->
-                <Slider x:Name="SeekSlider" Grid.Column="1" Margin="12,0,12,0"
-                        Style="{StaticResource PlayerSliderStyle}"
-                        Minimum="0"
-                        Maximum="{Binding DurationSeconds}"
-                        Value="{Binding PositionSeconds, Mode=TwoWay}"
-                        IsEnabled="{Binding HasMedia}"
-                        IsMoveToPointEnabled="True"
-                        Cursor="Hand"
-                        PreviewKeyUp="OnSeekKeyUp"
-                        Thumb.DragStarted="OnSeekDragStarted"
-                        Thumb.DragCompleted="OnSeekDragCompleted" />
-
-                <TextBlock Grid.Column="2" Text="{Binding DurationText}" FontSize="12"
-                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                           VerticalAlignment="Center" MinWidth="48"
-                           TextAlignment="Right" />
-            </Grid>
-
-            <!-- 传输控制与音量 -->
-            <Grid Grid.Row="2" Margin="0,22,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <ui:Button Content="打开文件"
+                    <ui:Button Grid.Column="1"
+                               Content="打开文件"
                                Icon="{ui:SymbolIcon FolderOpen24}"
                                Command="{Binding OpenFileCommand}"
-                               ToolTip="打开音频文件 (Ctrl+O)" />
+                               ToolTip="打开单个音频文件播放 (Ctrl+O)" />
 
-                    <Button Style="{StaticResource TransportButton}" Margin="14,0,0,0"
-                            Command="{Binding StopCommand}"
-                            IsEnabled="{Binding HasMedia}"
-                            ToolTip="停止 (Ctrl+S)">
-                        <ui:SymbolIcon Symbol="Stop24" FontSize="14" />
-                    </Button>
-                </StackPanel>
+                    <ui:Button Grid.Column="2"
+                               Margin="8,0,0,0"
+                               Content="添加文件夹"
+                               Appearance="Primary"
+                               Command="{Binding AddLibraryFolderCommand}"
+                               ToolTip="把音乐文件夹加入曲库，之后启动会自动同步" />
+                </Grid>
 
-                <Button Grid.Column="1" Style="{StaticResource PrimaryTransportButton}"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Command="{Binding TogglePlayPauseCommand}"
-                        IsEnabled="{Binding HasMedia}"
-                        ToolTip="{Binding PlayPauseHint}">
-                    <!--
-                      图标交给 ViewModel 决定：这里不能再用「本地 Text 值 + 样式触发器」，
-                      因为本地值的优先级高于触发器，触发器永远不生效，图标会恒定不变。
-                    -->
-                    <ui:SymbolIcon Symbol="{Binding PlayPauseSymbol}" FontSize="22" />
-                </Button>
+                <!-- 搜索框：输入即过滤，没有「回车才生效」这一步 -->
+                <ui:TextBox x:Name="SearchBox"
+                            Grid.Row="1"
+                            Margin="0,12,0,0"
+                            PlaceholderText="搜索标题、艺术家、专辑或文件名"
+                            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
 
                 <!--
-                  静音键与音量滑块合为一组：喇叭图标既显示当前状态、又是静音开关，
-                  滑块紧随其后调节音量。
-
-                  与进度条同款外观（已到达一段为蓝色），同样开启单击定位。
-                  音量走的是 OnVolumeChanged 直接写回引擎，不需要额外提交，
-                  因此这里不需要事件处理器。
+                  曲库列表。
+                  虚拟化必须显式打开：曲库是「几千到几万条」，不虚拟化时
+                  WPF 会为每一首建一个容器，扫描完成后界面会明显卡住。
+                  Recycling 模式复用容器，滚动时不再反复创建销毁。
                 -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource TransportButton}"
-                            Command="{Binding ToggleMuteCommand}"
-                            ToolTip="{Binding VolumeText}">
-                        <ui:SymbolIcon Symbol="{Binding VolumeSymbol}" FontSize="16" />
-                    </Button>
+                <Grid Grid.Row="2" Margin="0,10,0,0">
+                    <ListView x:Name="TrackList"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              Padding="0"
+                              ItemsSource="{Binding VisibleTracks}"
+                              ItemContainerStyle="{StaticResource TrackItemStyle}"
+                              SelectedIndex="{Binding CurrentIndex, Mode=OneWay}"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              VirtualizingStackPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                              MouseDoubleClick="OnTrackListDoubleClick">
+                        <ListView.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:Track}">
+                                <Grid Height="42">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                    <Slider Width="130" Margin="10,0,0,0"
-                            VerticalAlignment="Center"
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayTitle}"
+                                                   FontSize="13"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="{Binding DisplayArtist}"
+                                                   FontSize="11"
+                                                   Margin="0,2,0,0"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding DurationText}"
+                                               FontSize="11"
+                                               Margin="10,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <!--
+                      空态提示压在列表之上。
+                      两种情形分开写文案：曲库真的一首都没有时给「去添加文件夹」的引导，
+                      而搜索没结果时提醒是关键词的问题，别让用户误以为曲库被清空了。
+                    -->
+                    <StackPanel HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsHitTestVisible="False"
+                                Visibility="{Binding IsLibraryEmpty, Converter={StaticResource BoolToVisibility}}">
+                        <ui:SymbolIcon Symbol="MusicNote224"
+                                       FontSize="34"
+                                       HorizontalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorDisabledBrush}" />
+                        <TextBlock Text="曲库还是空的"
+                                   Margin="0,10,0,0"
+                                   FontSize="13"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="点上方「添加文件夹」，或把音频文件直接拖进窗口"
+                                   Margin="0,6,0,0"
+                                   FontSize="11"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+
+                    <TextBlock Text="没有匹配的曲目"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontSize="13"
+                               IsHitTestVisible="False"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Visibility="{Binding HasNoMatches, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
+
+                <!-- 列表页脚：扫描进度 / 命中数量 -->
+                <TextBlock Grid.Row="3"
+                           Margin="2,8,0,0"
+                           FontSize="11"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                           Text="{Binding ScanProgressText, TargetNullValue='双击列表中的曲目即可播放'}" />
+            </Grid>
+
+            <!-- ===================== 右栏：播放区 ===================== -->
+            <Grid Grid.Column="1" Margin="28,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 中部：封面 + 曲目信息 -->
+                <Grid Grid.Row="0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!--
+                      封面容器。未提取到封面时底层的音符占位图标会透出来，
+                      因此不需要额外的可见性切换逻辑。
+                    -->
+                    <Border Grid.Column="0" Width="180" Height="180" CornerRadius="10"
+                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            ClipToBounds="True">
+                        <Grid>
+                            <ui:SymbolIcon Symbol="MusicNote224" FontSize="46"
+                                           Foreground="{DynamicResource TextFillColorDisabledBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Image Source="{Binding CurrentTrack.CoverCachePath}" Stretch="UniformToFill" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Column="1" Margin="26,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}" FontSize="30" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Artist}" FontSize="16" Margin="0,10,0,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Album}" FontSize="13" Margin="0,6,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding FormatText}" FontSize="12" Margin="0,14,0,0"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- 进度条与时间 -->
+                <Grid Grid.Row="1" Margin="0,30,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding PositionText}" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               VerticalAlignment="Center" MinWidth="48" />
+
+                    <!--
+                      进度条：外观走上面自备的 PlayerSliderStyle（已播放段为蓝色）。
+                      单击跳转不走 XAML 事件，原因见 MainWindow.xaml.cs 里的
+                      OnSeekMouseLeftButtonDown：必须赶在引擎旧位置回包覆盖之前提交，
+                      而且要绕过 Slider 自己对该事件的 Handled 标记。
+                    -->
+                    <Slider x:Name="SeekSlider" Grid.Column="1" Margin="12,0,12,0"
                             Style="{StaticResource PlayerSliderStyle}"
-                            Minimum="0" Maximum="100"
-                            Value="{Binding Volume, Mode=TwoWay}"
+                            Minimum="0"
+                            Maximum="{Binding DurationSeconds}"
+                            Value="{Binding PositionSeconds, Mode=TwoWay}"
+                            IsEnabled="{Binding HasMedia}"
                             IsMoveToPointEnabled="True"
                             Cursor="Hand"
-                            ToolTip="{Binding VolumeText}" />
-                </StackPanel>
+                            PreviewKeyUp="OnSeekKeyUp"
+                            Thumb.DragStarted="OnSeekDragStarted"
+                            Thumb.DragCompleted="OnSeekDragCompleted" />
+
+                    <TextBlock Grid.Column="2" Text="{Binding DurationText}" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               VerticalAlignment="Center" MinWidth="48"
+                               TextAlignment="Right" />
+                </Grid>
+
+                <!-- 传输控制与音量 -->
+                <Grid Grid.Row="2" Margin="0,22,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!--
+                      左侧：停止 + 播放模式。
+                      播放模式放在这里而不是挨着主播放键：它不是「切歌」动作，
+                      而是对切歌行为的设置，跟停止一起归到「其它操作」更清楚。
+                    -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource TransportButton}"
+                                Command="{Binding StopCommand}"
+                                IsEnabled="{Binding HasMedia}"
+                                ToolTip="停止 (Ctrl+S)">
+                            <ui:SymbolIcon Symbol="Stop24" FontSize="14" />
+                        </Button>
+
+                        <Button Style="{StaticResource TransportButton}" Margin="10,0,0,0"
+                                Command="{Binding CycleRepeatModeCommand}"
+                                ToolTip="{Binding RepeatHint}">
+                            <ui:SymbolIcon Symbol="{Binding RepeatSymbol}" FontSize="16" />
+                        </Button>
+                    </StackPanel>
+
+                    <!--
+                      中间：上一首 / 播放暂停 / 下一首。
+                      上一首与下一首在只有一首歌或队列为空时仍然可用（会重播自己），
+                      因此只用 HasMedia 决定是否启用，避免用户对着灰按钮猜为什么点不动。
+                    -->
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Button Style="{StaticResource TransportButton}"
+                                Command="{Binding PlayPreviousCommand}"
+                                ToolTip="上一首 (Ctrl+←)">
+                            <ui:SymbolIcon Symbol="ArrowPrevious24" FontSize="16" />
+                        </Button>
+
+                        <Button Style="{StaticResource PrimaryTransportButton}" Margin="14,0,0,0"
+                                Command="{Binding TogglePlayPauseCommand}"
+                                IsEnabled="{Binding HasMedia}"
+                                ToolTip="{Binding PlayPauseHint}">
+                            <!--
+                              图标交给 ViewModel 决定：这里不能再用「本地 Text 值 + 样式触发器」，
+                              因为本地值的优先级高于触发器，触发器永远不生效，图标会恒定不变。
+                            -->
+                            <ui:SymbolIcon Symbol="{Binding PlayPauseSymbol}" FontSize="22" />
+                        </Button>
+
+                        <Button Style="{StaticResource TransportButton}" Margin="14,0,0,0"
+                                Command="{Binding PlayNextCommand}"
+                                ToolTip="下一首 (Ctrl+→)">
+                            <ui:SymbolIcon Symbol="ArrowNext24" FontSize="16" />
+                        </Button>
+                    </StackPanel>
+
+                    <!--
+                      静音键与音量滑块合为一组：喇叭图标既显示当前状态、又是静音开关，
+                      滑块紧随其后调节音量。
+
+                      与进度条同款外观（已到达一段为蓝色），同样开启单击定位。
+                      音量走的是 OnVolumeChanged 直接写回引擎，不需要额外提交，
+                      因此这里不需要事件处理器。
+                    -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource TransportButton}"
+                                Command="{Binding ToggleMuteCommand}"
+                                ToolTip="{Binding VolumeText}">
+                            <ui:SymbolIcon Symbol="{Binding VolumeSymbol}" FontSize="16" />
+                        </Button>
+
+                        <Slider Width="130" Margin="10,0,0,0"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource PlayerSliderStyle}"
+                                Minimum="0" Maximum="100"
+                                Value="{Binding Volume, Mode=TwoWay}"
+                                IsMoveToPointEnabled="True"
+                                Cursor="Hand"
+                                ToolTip="{Binding VolumeText}" />
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

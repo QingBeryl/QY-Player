@@ -1,11 +1,14 @@
+using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using QYPlayer.Core.Library;
 using QYPlayer.Core.Metadata;
 using QYPlayer.Core.Models;
 using QYPlayer.Core.Playback;
+using QYPlayer.Core.Settings;
 using QYPlayer.Core.Sources;
 using QYPlayer.Metadata;
 using Wpf.Ui.Controls;
@@ -16,23 +19,35 @@ namespace QYPlayer.App.ViewModels;
 /// 主窗口的 ViewModel。
 /// </summary>
 /// <remarks>
+/// <para>
 /// M1 阶段的职责范围：打开单个文件、播放控制、进度与音量。
-/// 曲库、播放列表、上一首/下一首在 M2 与 M3 接入（M2 批次划分见需求文档 9.11）。
-///
+/// M2-4 起接入曲库：列表、搜索、上一首/下一首、四种播放模式，
+/// 以及外部文件变动后的自更新（需求文档 9.11）。
+/// </para>
+/// <para>
 /// 线程约定：播放引擎的事件来自其内部线程，这里统一通过
 /// <see cref="SynchronizationContext"/> 回到 UI 线程再更新可绑定属性，
 /// 否则 WPF 绑定会在跨线程访问时抛异常。
+/// </para>
 /// </remarks>
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IPlaybackService _playback;
     private readonly IMetadataReader _metadataReader;
     private readonly TrackSourceResolver _sourceResolver;
+    private readonly ILibraryStore _libraryStore;
+    private readonly LibrarySynchronizer _synchronizer;
+    private readonly LibraryWatcher _watcher;
+    private readonly ISettingsStore _settings;
     private readonly ILogger<MainViewModel>? _logger;
     private readonly SynchronizationContext? _uiContext;
 
     private bool _isUpdatingFromEngine;
     private bool _disposed;
+
+    /// <summary>防止曲库扫描重入：重扫期间再次收到变动通知时只记一个待办标记。</summary>
+    private bool _isSyncing;
+    private bool _resyncRequested;
 
     /// <summary>
     /// 静音与音量滑块的联动规则。见 <see cref="MuteVolumeLink"/>。
@@ -44,15 +59,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IPlaybackService playback,
         IMetadataReader metadataReader,
         TrackSourceResolver sourceResolver,
+        ILibraryStore libraryStore,
+        LibrarySynchronizer synchronizer,
+        LibraryWatcher watcher,
+        ISettingsStore settings,
         ILogger<MainViewModel>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(playback);
         ArgumentNullException.ThrowIfNull(metadataReader);
         ArgumentNullException.ThrowIfNull(sourceResolver);
+        ArgumentNullException.ThrowIfNull(libraryStore);
+        ArgumentNullException.ThrowIfNull(synchronizer);
+        ArgumentNullException.ThrowIfNull(watcher);
+        ArgumentNullException.ThrowIfNull(settings);
 
         _playback = playback;
         _metadataReader = metadataReader;
         _sourceResolver = sourceResolver;
+        _libraryStore = libraryStore;
+        _synchronizer = synchronizer;
+        _watcher = watcher;
+        _settings = settings;
         _logger = logger;
 
         // 构造发生在 UI 线程，此时捕获的上下文即用于后续回投。
@@ -60,10 +87,30 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         _volume = _playback.Volume;
         _isMuted = _playback.IsMuted;
-        _statusText = "请选择要播放的音频文件";
+        _statusText = "正在加载曲库…";
+
+        _queue = new PlayQueue { RepeatMode = _settings.Current.RepeatMode };
+
+        TrackItems = new ReadOnlyObservableCollection<Track>(_trackItems);
+        VisibleTracks = new ReadOnlyObservableCollection<Track>(_visibleTracks);
 
         Subscribe();
+
+        // 监听器的通知来自线程池线程，必须切回 UI 线程再动列表。
+        _watcher.Changed += OnLibraryChangedOnDisk;
     }
+
+    /// <summary>曲库全量列表，顺序与数据库一致（路径升序）。</summary>
+    private readonly ObservableCollection<Track> _trackItems = [];
+
+    /// <summary>搜索过滤后的列表，界面绑定的是这一个。</summary>
+    private readonly ObservableCollection<Track> _visibleTracks = [];
+
+    private readonly PlayQueue _queue;
+
+    public ReadOnlyObservableCollection<Track> TrackItems { get; }
+
+    public ReadOnlyObservableCollection<Track> VisibleTracks { get; }
 
     [ObservableProperty]
     private Track? _currentTrack;
@@ -82,6 +129,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private string _statusText;
+
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
+    /// <summary>曲库是否空闲（没有在扫描）。界面据此提示「正在扫描…」。</summary>
+    [ObservableProperty]
+    private bool _isLibraryBusy;
 
     /// <summary>当前是否处于「可暂停」状态，用于按钮启用逻辑。</summary>
     [ObservableProperty]
@@ -149,6 +203,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>主播放键的提示文字，随状态在「播放」与「暂停」之间切换。</summary>
     public string PlayPauseHint => IsPlaying ? "暂停 (空格)" : "播放 (空格)";
 
+    /// <summary>播放模式图标。四种模式各有一个字形，用户一眼能认出当前处于哪一种。</summary>
+    public SymbolRegular RepeatSymbol => _queue.RepeatMode switch
+    {
+        RepeatMode.RepeatAll => SymbolRegular.ArrowRepeatAll24,
+        RepeatMode.RepeatOne => SymbolRegular.ArrowRepeat124,
+        RepeatMode.Shuffle => SymbolRegular.ArrowShuffle24,
+        _ => SymbolRegular.ArrowRepeatAllOff24,
+    };
+
+    public string RepeatHint => _queue.RepeatMode switch
+    {
+        RepeatMode.RepeatAll => "列表循环（点击切换）",
+        RepeatMode.RepeatOne => "单曲循环（点击切换）",
+        RepeatMode.Shuffle => "随机播放（点击切换）",
+        _ => "顺序播放（点击切换）",
+    };
+
+    /// <summary>被搜索过滤掉多少条，用于「没有匹配」的空态提示。</summary>
+    public bool HasNoMatches => !IsLibraryBusy
+        && VisibleTracks.Count == 0
+        && !string.IsNullOrWhiteSpace(SearchText);
+
+    /// <summary>曲库为空（一首都没有）时的空态提示。</summary>
+    public bool IsLibraryEmpty => !IsLibraryBusy
+        && TrackItems.Count == 0
+        && string.IsNullOrWhiteSpace(SearchText);
+
     /// <summary>拖动进度条时不把中间值写回引擎，避免跳转抖动与性能损耗。</summary>
     public bool IsSeekDragging { get; set; }
 
@@ -182,9 +263,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// 读取元数据并开始播放。公开出来是为了 M2 的曲库双击播放可以直接复用。
+    /// 读取元数据并开始播放。公开出来是为了曲库列表的双击播放可以直接复用。
     /// </summary>
     public async Task LoadAndPlayAsync(string filePath)
+    {
+        // 曲库里的曲目已经带着元数据（含缓存好的封面路径），
+        // 再读一次标签纯属浪费，而且会让封面缓存被重复计算。
+        var known = _queue.IndexOf(filePath) >= 0 ? _queue.Tracks[_queue.IndexOf(filePath)] : null;
+
+        if (known is not null)
+        {
+            _queue.SetCurrent(filePath);
+            OnPropertyChanged(nameof(CurrentIndex));
+            await _playback.PlayAsync(known);
+            return;
+        }
+
+        await LoadAndPlayFromDiskAsync(filePath);
+    }
+
+    /// <summary>不在曲库里的文件（打开文件对话框、拖放进来）走这条路，需要现场读标签。</summary>
+    private async Task LoadAndPlayFromDiskAsync(string filePath)
     {
         try
         {
@@ -213,6 +312,331 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             // 元数据读取失败不应当阻止播放，这里只提示引擎的结果。
             _logger?.LogError(ex, "加载文件失败：{Path}", filePath);
             StatusText = $"加载失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>曲库列表双击：播放被点中的那一首。</summary>
+    [RelayCommand]
+    private async Task PlayTrackAsync(Track? track)
+    {
+        if (track is null)
+        {
+            return;
+        }
+
+        await LoadAndPlayAsync(track.FilePath);
+    }
+
+    [RelayCommand]
+    private async Task PlayNextAsync() => await PlayAtAsync(_queue.NextIndex(autoAdvance: false));
+
+    [RelayCommand]
+    private async Task PlayPreviousAsync() => await PlayAtAsync(_queue.PreviousIndex());
+
+    /// <summary>
+    /// 切到指定下标。下标为 null 表示「按当前模式没有下一首」，此时停下。
+    /// </summary>
+    private async Task PlayAtAsync(int? index)
+    {
+        if (index is not int target || target < 0 || target >= _queue.Count)
+        {
+            // 顺序播放在末尾没有下一首，语义就是停止。
+            _playback.Stop();
+            StatusText = "播放结束";
+            return;
+        }
+
+        var track = _queue.Tracks[target];
+        _queue.SetCurrent(track.FilePath);
+        OnPropertyChanged(nameof(CurrentIndex));
+
+        await _playback.PlayAsync(track);
+    }
+
+    /// <summary>依次切换四种播放模式，并把选择记进设置。</summary>
+    [RelayCommand]
+    private void CycleRepeatMode()
+    {
+        _queue.RepeatMode = _queue.RepeatMode switch
+        {
+            RepeatMode.Sequential => RepeatMode.RepeatAll,
+            RepeatMode.RepeatAll => RepeatMode.RepeatOne,
+            RepeatMode.RepeatOne => RepeatMode.Shuffle,
+            _ => RepeatMode.Sequential,
+        };
+
+        _settings.Current.RepeatMode = _queue.RepeatMode;
+        _settings.Save();
+
+        OnPropertyChanged(nameof(RepeatSymbol));
+        OnPropertyChanged(nameof(RepeatHint));
+    }
+
+    /// <summary>曲库扫描期间用于显示进度。</summary>
+    [ObservableProperty]
+    private string? _scanProgressText;
+
+    private readonly List<string> _libraryFolders = [];
+
+    /// <summary>
+    /// 启动时加载并同步曲库。由窗口在 Loaded 时调用一次。
+    /// </summary>
+    /// <remarks>
+    /// 之所以不在构造函数里做：构造发生在窗口显示之前，
+    /// 此时扫描一万个文件会让窗口迟迟不出现（2.3 要求 2 秒内可交互）。
+    /// 先让界面出来，再在后台把曲库填进去。
+    /// </remarks>
+    public async Task InitializeLibraryAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            IsLibraryBusy = true;
+
+            await _libraryStore.InitializeAsync(cancellationToken);
+
+            _libraryFolders.Clear();
+            _libraryFolders.AddRange(_settings.Current.LibraryFolders);
+
+            await SyncLibraryAsync(cancellationToken);
+
+            // 同步完成后再开监听：先监听再扫描的话，
+            // 扫描期间忽略的事件会被当成「又有新变动」而触发一次多余重扫。
+            _watcher.Watch(_libraryFolders);
+
+            StatusText = TrackItems.Count == 0
+                ? "曲库为空，请先添加音乐文件夹"
+                : $"曲库就绪，共 {TrackItems.Count} 首";
+        }
+        catch (OperationCanceledException)
+        {
+            // 窗口关闭时取消，不需要提示。
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "加载曲库失败");
+            StatusText = $"曲库加载失败：{ex.Message}";
+        }
+        finally
+        {
+            IsLibraryBusy = false;
+            NotifyEmptyStateChanged();
+        }
+    }
+
+    /// <summary>
+    /// 把磁盘现状与库里的记录对齐：启动兜底与运行期自更新走的是同一条路径。
+    /// </summary>
+    private async Task SyncLibraryAsync(CancellationToken cancellationToken = default)
+    {
+        if (_isSyncing)
+        {
+            // 扫描期间又收到变动通知时只记一个标记，等这一轮结束后再补一次，
+            // 否则同时开两次扫描会互相覆盖结果。
+            _resyncRequested = true;
+            return;
+        }
+
+        _isSyncing = true;
+
+        try
+        {
+            do
+            {
+                _resyncRequested = false;
+                await RunSyncOnceAsync(cancellationToken);
+            }
+            while (_resyncRequested && !cancellationToken.IsCancellationRequested);
+        }
+        finally
+        {
+            _isSyncing = false;
+
+            // 监听目录跟着设置走：用户新加了文件夹后要立刻开始盯它。
+            _watcher.Watch(_libraryFolders);
+        }
+    }
+
+    private async Task RunSyncOnceAsync(CancellationToken cancellationToken)
+    {
+        var known = await _libraryStore.LoadAsync(cancellationToken);
+
+        // 进度回调来自扫描线程，先切回 UI 线程再改可绑定属性。
+        var progress = new Progress<ScanProgress>(report =>
+        {
+            ScanProgressText = report.Total <= 0
+                ? null
+                : $"正在解析 {report.Completed} / {report.Total}";
+        });
+
+        var result = await _synchronizer.SyncAsync(
+            known,
+            _libraryFolders,
+            progress,
+            cancellationToken);
+
+        // 只有新增或变化过的曲目才写库，避免每次启动都对整库做一次写事务。
+        if (result.NeedUpsert.Count > 0)
+        {
+            await _libraryStore.UpsertAsync(result.NeedUpsert, cancellationToken);
+        }
+
+        if (result.RemovedPaths.Count > 0)
+        {
+            await _libraryStore.RemoveMissingAsync(
+                result.Tracks.Select(track => track.FilePath).ToList(),
+                cancellationToken);
+        }
+
+        ApplyTracks(result.Tracks);
+
+        ScanProgressText = null;
+    }
+
+    /// <summary>
+    /// 把同步结果换成界面列表。保留当前正在播放的那一首的队列位置。
+    /// </summary>
+    private void ApplyTracks(IReadOnlyList<Track> tracks)
+    {
+        var currentPath = _playback.CurrentTrack?.FilePath ?? _queue.Current?.FilePath;
+
+        _trackItems.Clear();
+        foreach (var track in tracks)
+        {
+            _trackItems.Add(track);
+        }
+
+        // 队列按新列表重建，但当前曲目按路径重新定位：
+        // 刷新不该让「正在播的是哪一首」丢失，否则切下一首会跳回开头。
+        _queue.SetTracks(tracks, currentPath);
+
+        ApplyFilter();
+        OnPropertyChanged(nameof(CurrentIndex));
+    }
+
+    partial void OnSearchTextChanged(string value) => ApplyFilter();
+
+    partial void OnIsLibraryBusyChanged(bool value) => NotifyEmptyStateChanged();
+
+    private void NotifyEmptyStateChanged()
+    {
+        OnPropertyChanged(nameof(HasNoMatches));
+        OnPropertyChanged(nameof(IsLibraryEmpty));
+    }
+
+    /// <summary>
+    /// 按关键词过滤列表。
+    /// </summary>
+    /// <remarks>
+    /// 在内存里过滤而不是查数据库：曲库规模是「几千到几万条」，
+    /// 内存过滤是毫秒级，而每次敲键都发一次 SQL 反而更慢，
+    /// 也会让列表在输入过程中反复重排。
+    /// </remarks>
+    private void ApplyFilter()
+    {
+        var keyword = SearchText?.Trim();
+
+        _visibleTracks.Clear();
+
+        foreach (var track in _trackItems)
+        {
+            if (string.IsNullOrEmpty(keyword) || Matches(track, keyword))
+            {
+                _visibleTracks.Add(track);
+            }
+        }
+
+        NotifyEmptyStateChanged();
+    }
+
+    /// <summary>标题、艺术家、专辑、文件名任一命中即可，与用户「记得的那点信息」对齐。</summary>
+    private static bool Matches(Track track, string keyword) =>
+        Contains(track.DisplayTitle, keyword)
+        || Contains(track.DisplayArtist, keyword)
+        || Contains(track.DisplayAlbum, keyword)
+        || Contains(track.FileName, keyword);
+
+    private static bool Contains(string source, string keyword) =>
+        source.Contains(keyword, StringComparison.CurrentCultureIgnoreCase);
+
+    /// <summary>
+    /// 当前曲目在<b>可见列表</b>中的下标，供列表高亮选中行。
+    /// </summary>
+    /// <remarks>
+    /// 必须按可见列表算而不是全量列表：搜索过滤之后两者的下标不再一致，
+    /// 用全量下标去索引可见列表会把高亮落到别的曲目（甚至越界失焦）。
+    /// 正在播放的那一首被过滤掉时返回 -1，此时列表不高亮任何一行，符合预期。
+    /// </remarks>
+    public int CurrentIndex => _visibleTracks.IndexOf(FindCurrentTrack()!);
+
+    /// <summary>在列表里找出与引擎当前曲目路径相同的那一项。</summary>
+    private Track? FindCurrentTrack()
+    {
+        var path = _playback.CurrentTrack?.FilePath;
+
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        foreach (var track in _visibleTracks)
+        {
+            if (string.Equals(track.FilePath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return track;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 让用户挑一个文件夹加入曲库。空曲库时界面的引导按钮也走这里。
+    /// </summary>
+    [RelayCommand]
+    private async Task AddLibraryFolderAsync()
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "选择音乐文件夹",
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var folder = dialog.FolderName;
+
+        if (_libraryFolders.Contains(folder, StringComparer.OrdinalIgnoreCase))
+        {
+            StatusText = "该文件夹已在曲库中";
+            return;
+        }
+
+        _libraryFolders.Add(folder);
+
+        // 曲库目录属于设置的一部分，改了要立刻存盘，否则下次启动又没了。
+        _settings.Current.LibraryFolders = [.. _libraryFolders];
+        _settings.Save();
+
+        IsLibraryBusy = true;
+        StatusText = "正在扫描曲库…";
+
+        try
+        {
+            await SyncLibraryAsync();
+            StatusText = $"曲库已更新，共 {TrackItems.Count} 首";
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "扫描曲库失败");
+            StatusText = $"扫描失败：{ex.Message}";
+        }
+        finally
+        {
+            IsLibraryBusy = false;
+            NotifyEmptyStateChanged();
         }
     }
 
@@ -370,6 +794,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // 曲目清空（停止）或装载（开始播放）都走这里，是 HasMedia 的唯一来源。
         HasMedia = track is not null;
 
+        // 引擎装载的曲目可能与队列记录的不是同一个实例（例如拖进来的单文件），
+        // 按路径对齐可以让切歌从它所在的位置继续。
+        if (track is not null)
+        {
+            _queue.SetCurrent(track.FilePath);
+        }
+
+        OnPropertyChanged(nameof(CurrentIndex));
+
         if (track is null)
         {
             Title = "QY Player";
@@ -412,12 +845,32 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void OnDurationChanged(object? sender, TimeSpan duration) => Post(() =>
         DurationSeconds = duration.TotalSeconds);
 
+    /// <summary>
+    /// 自然播完：交给队列决定下一首。
+    /// </summary>
+    /// <remarks>
+    /// 引擎在播完时刻意保留了当前曲目，因此这里可以直接往下一首走，
+    /// 不需要先处理「曲目被清空」的情形。顺序播放到末尾时
+    /// <see cref="PlayQueue.NextIndex"/> 返回 null，此时停下即符合
+    /// 「顺序播放，播完最后一首停止」的定义（需求文档 2.1）。
+    ///
+    /// <c>autoAdvance: true</c> 的区别只在单曲循环：自动切歌时原地重播。
+    /// </remarks>
     private void OnPlaybackEnded(object? sender, EventArgs e) => Post(() =>
     {
-        // M2 后半（第 5 步）接入播放队列后，这里改为自动切下一首。
-        StatusText = "播放结束";
-        IsPlaying = false;
-        IsPaused = false;
+        var next = _queue.NextIndex(autoAdvance: true);
+
+        if (next is null)
+        {
+            StatusText = "播放结束";
+            IsPlaying = false;
+            IsPaused = false;
+            return;
+        }
+
+        // 不能 await：这是事件处理器，用火忘方式启动即可，
+        // 失败路径由 PlayAsync 内部的错误广播兜住。
+        _ = PlayAtAsync(next);
     });
 
     private void OnPlaybackFailed(object? sender, string message) => Post(() =>
@@ -428,6 +881,41 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsPlaying = false;
         IsPaused = false;
     });
+
+    /// <summary>
+    /// 磁盘上的曲库发生变化（新增、删除、改名、写入完成）。
+    /// </summary>
+    /// <remarks>
+    /// 监听器只告诉「变了」，具体变没变、变了什么由重扫判断（8.2 的口径）：
+    /// 大小与最后写入时间都没动过，这次重扫就一首也不解析。
+    /// </remarks>
+    private void OnLibraryChangedOnDisk(object? sender, EventArgs e) => Post(() =>
+    {
+        StatusText = "曲库有变动，正在更新…";
+        _ = SyncLibraryAsyncFromWatcherAsync();
+    });
+
+    private async Task SyncLibraryAsyncFromWatcherAsync()
+    {
+        try
+        {
+            IsLibraryBusy = true;
+            await SyncLibraryAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "响应曲库变动失败");
+        }
+        finally
+        {
+            IsLibraryBusy = false;
+
+            if (StatusText == "曲库有变动，正在更新…")
+            {
+                StatusText = $"曲库已更新，共 {TrackItems.Count} 首";
+            }
+        }
+    }
 
     /// <summary>
     /// 把回调切回 UI 线程。构造时若没有捕获到上下文（例如在设计器或测试中），
@@ -505,6 +993,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+
+        _watcher.Changed -= OnLibraryChangedOnDisk;
+        _watcher.Dispose();
+
         Unsubscribe();
     }
 }
