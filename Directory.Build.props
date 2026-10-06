@@ -12,7 +12,7 @@
       避免出现"exe 显示 0.1.0、安装包显示 1.0.0"这类不一致。
       发布新版本时只改这一处，打包脚本默认也从这里读。
     -->
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <Copyright>Copyright (c) 2026 QY Player</Copyright>
   </PropertyGroup>
 
