@@ -353,9 +353,9 @@
 
                 <!--
                   进度条：外观走上面自备的 PlayerSliderStyle（已播放段为蓝色）。
-                  IsMoveToPointEnabled 让单击轨道即可定位，配合 code-behind 里的
-                  OnSeekClick 把值提交给引擎——该属性会吞掉点击、不触发 Thumb 拖拽，
-                  只靠 DragCompleted 提交的话单击是不生效的。
+                  单击跳转不走 XAML 事件，原因见 MainWindow.xaml.cs 里的
+                  OnSeekMouseLeftButtonDown：必须赶在引擎旧位置回包覆盖之前提交，
+                  而且要绕过 Slider 自己对该事件的 Handled 标记。
                 -->
                 <Slider x:Name="SeekSlider" Grid.Column="1" Margin="12,0,12,0"
                         Style="{StaticResource PlayerSliderStyle}"
@@ -365,7 +365,6 @@
                         IsEnabled="{Binding HasMedia}"
                         IsMoveToPointEnabled="True"
                         Cursor="Hand"
-                        PreviewMouseLeftButtonUp="OnSeekClick"
                         PreviewKeyUp="OnSeekKeyUp"
                         Thumb.DragStarted="OnSeekDragStarted"
                         Thumb.DragCompleted="OnSeekDragCompleted" />

@@ -151,6 +151,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>拖动进度条时不把中间值写回引擎，避免跳转抖动与性能损耗。</summary>
     public bool IsSeekDragging { get; set; }
 
+    /// <summary>
+    /// 跳转后的位置回传抑制，见 <see cref="SeekLatch"/>。
+    /// </summary>
+    /// <remarks>
+    /// 没有它的话，点击跳转会与引擎异步回传的旧位置赛跑：
+    /// 队列里那条「跳转生效前」的位置一旦在提交之后才被处理，
+    /// 就会把刚跳过去的位置又拽回来，这就是「时而不灵」的来源。
+    /// </remarks>
+    private readonly SeekLatch _seekLatch = new();
+
     [RelayCommand]
     private async Task OpenFileAsync()
     {
@@ -215,8 +225,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ToggleMute() => _playback.SetMute(!_playback.IsMuted);
 
     /// <summary>
-    /// 进度条松手后调用，把最终位置写回引擎。
+    /// 进度条松手、单击或键盘微调后调用，把位置写回引擎。
     /// </summary>
+    /// <remarks>
+    /// 提交之后立刻上闩：引擎的位置回传是异步的，队列里可能还压着一条
+    /// 跳转生效前的旧位置，它一旦晚于这里被处理就会把刚跳过去的值拽回来。
+    /// 上闩之后由 <see cref="SeekLatch"/> 负责识别并忽略这类旧回包。
+    /// </remarks>
     [RelayCommand]
     private void CommitSeek()
     {
@@ -227,7 +242,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _playback.Seek(TimeSpan.FromSeconds(PositionSeconds));
+        var target = PositionSeconds;
+        _playback.Seek(TimeSpan.FromSeconds(target));
+        _seekLatch.Arm(target);
     }
 
     partial void OnVolumeChanged(int value)
@@ -375,6 +392,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void OnPositionChanged(object? sender, TimeSpan position) => Post(() =>
     {
         if (IsSeekDragging)
+        {
+            return;
+        }
+
+        // 跳转刚提交时，队列里可能还压着一条跳转生效前的旧位置。
+        // 它若在此刻被采用，就会把进度条拽回原处，看起来像「点了没反应」。
+        if (!_seekLatch.ShouldAccept(position.TotalSeconds))
         {
             return;
         }

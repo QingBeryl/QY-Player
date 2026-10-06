@@ -1,8 +1,10 @@
 ﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using QYPlayer.App.ViewModels;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
@@ -22,6 +24,24 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+
+        // 单击进度条跳转必须在「按下」这一刻就提交，不能等到「抬起」。
+        //
+        // 原因：点下进度条后，Slider 会把 Value 设成点击处的位置，绑定随即写入
+        // PositionSeconds；但引擎的位置回传（约每 250ms 一次）也在往 UI 线程投递，
+        // 若其中一条「跳转生效前」的旧位置在按下与抬起之间被处理，它会把
+        // PositionSeconds 覆盖回原处，抬起时提交的就成了旧位置——表现就是
+        // 「点了没反应」。按住的时间越长越容易踩中，这正是「时而不灵」的来源。
+        // 改成按下即提交，这个竞态窗口就不存在了。
+        //
+        // 之所以要用 AddHandler 而不是在 XAML 上写 PreviewMouseLeftButtonDown：
+        // Slider 在 IsMoveToPointEnabled 生效时会自行把该事件置为 Handled，
+        // XAML 挂上去的处理器（handledEventsToo 默认 false）会被直接跳过。
+        // 传 true 才能收到，而此时 Slider 已经算好了新位置，正好接着提交。
+        SeekSlider.AddHandler(
+            PreviewMouseLeftButtonDownEvent,
+            new MouseButtonEventHandler(OnSeekMouseLeftButtonDown),
+            handledEventsToo: true);
     }
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
@@ -99,27 +119,66 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// 单击进度条后把位置提交给引擎。
+    /// 在进度条上按下鼠标时立即提交跳转。
     /// </summary>
     /// <remarks>
-    /// 为什么需要这一条：进度条开了 IsMoveToPointEnabled，单击轨道时
-    /// Slider 会在 PreviewMouseLeftButtonDown 里算好新值并置 Handled = true，
-    /// Thumb 的拖拽因此根本不会启动，Thumb.DragCompleted 也就不会触发。
-    /// 只靠 DragCompleted 提交的话，新值只停在绑定层，引擎下一帧回传的
-    /// 播放位置又会把它拽回去，表现就是「点了没反应，要双击双击才行」。
+    /// 由构造函数用 AddHandler(handledEventsToo: true) 注册，理由见那里的注释。
+    /// 本处理器在 Slider 的类处理器之后运行，因此触发时新位置已经写好，
+    /// 这里接着把它交给引擎即可。
     ///
-    /// 用 Preview 而非冒泡：隧道事件先于 Thumb 的 DragCompleted 到达，
-    /// 于是拖动滑块松手时这里仍能看到 IsSeekDragging 为 true，
-    /// 可以干净地让给 OnSeekDragCompleted 收尾，避免同一位置提交两次。
+    /// 读 <see cref="Slider.Value"/> 而不是 ViewModel 的 PositionSeconds：
+    /// 两者之间隔着一层绑定，写值与读值并非同一时刻完成，直接取控件当前值最可靠。
     /// </remarks>
-    private void OnSeekClick(object sender, MouseButtonEventArgs e)
+    private void OnSeekMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (ViewModel is not { } viewModel || viewModel.IsSeekDragging)
         {
             return;
         }
 
+        // 按在滑块圆点上时 Slider 不走 move-to-point 分支，位置没有变，
+        // 这一按是拖动的起点，交给 DragStarted → DragCompleted 收尾即可。
+        // 若这里也提交一次，会与随后的拖动叠加出一次多余的跳转。
+        if (IsFromThumb(e.OriginalSource))
+        {
+            return;
+        }
+
+        viewModel.PositionSeconds = SeekSlider.Value;
         viewModel.CommitSeekCommand.Execute(null);
+    }
+
+    /// <summary>
+    /// 判断鼠标是否按在滑块圆点（Thumb）上。
+    /// </summary>
+    /// <remarks>
+    /// 沿视觉树从事件源往上找，遇到 Thumb 即命中，遇到 Slider 说明已经走到头。
+    /// 之所以从事件源而非控件属性判断：Thumb 藏在模板内部，
+    /// Slider 的 Track / Thumb 属性对外不可见，取不到。
+    /// </remarks>
+    private static bool IsFromThumb(object originalSource)
+    {
+        var node = originalSource as DependencyObject;
+
+        while (node is not null)
+        {
+            if (node is Thumb)
+            {
+                return true;
+            }
+
+            if (node is Slider)
+            {
+                return false;
+            }
+
+            // 只有 Visual 才有父级可走；其它类型（如文档内的 Run）到此为止。
+            node = node is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(node)
+                : null;
+        }
+
+        return false;
     }
 
     /// <summary>

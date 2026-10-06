@@ -786,11 +786,25 @@ M2 同时收尾两处遗留：`AssemblyMarker.cs` 目前是空占位，曲库工
 
 **单击不跳转的根因是提交路径缺失。** `SeekSlider` 本就开了 `IsMoveToPointEnabled="True"`，但该属性生效时 WPF 会在 `OnPreviewMouseLeftButtonDown` 里算好新值并置 `e.Handled = true`，Thumb 的拖拽因此根本不会启动，`Thumb.DragCompleted` 也就不会触发。而把位置写回引擎的 `CommitSeek` 只挂在 `DragCompleted` 上——于是新值只停在绑定层，引擎下一帧回传的播放位置又把它拽回去，观感就是「点了没反应」。音量条更彻底：它连 `IsMoveToPointEnabled` 都没设，单击完全无效果。
 
-**修法是补一条与拖拽平行的提交路径。** 进度条新增 `PreviewMouseLeftButtonUp` 处理，单击后显式调用 `CommitSeekCommand`。用 Preview（隧道）而非冒泡事件，是因为隧道先于 Thumb 的 `DragCompleted` 到达，拖动滑块松手时这里仍能看到 `IsSeekDragging` 为 `true`，可以干净地让给 `OnSeekDragCompleted` 收尾，避免同一位置提交两次。同理补了 `PreviewKeyUp`：方向键、PageUp / PageDown、Home / End 只改 Slider 的值、不产生拖拽，同样需要显式提交，且只认会改变位置的按键——空格之类落在进度条上时不该触发跳转。音量条不需要额外处理：它的 `OnVolumeChanged` 本身就直写引擎。
+**修法是补一条与拖拽平行的提交路径。** 进度条新增提交处理，单击后显式调用 `CommitSeekCommand`。同理补了 `PreviewKeyUp`：方向键、PageUp / PageDown、Home / End 只改 Slider 的值、不产生拖拽，同样需要显式提交，且只认会改变位置的按键——空格之类落在进度条上时不该触发跳转。音量条不需要额外处理：它的 `OnVolumeChanged` 本身就直写引擎。
 
 **顺带补齐的交互细节。** 两条滑块都加 `Cursor="Hand"`，音量条补上 `IsMoveToPointEnabled="True"`；`PlayerSliderStyle` 增加 `IsEnabled=False` 时整条降至 0.4 不透明度，让「没有曲目时拖不动」这件事看得出来。
 
-**验证。** 编译 0 警告 0 错误，33 个单元测试全部通过；发布到 `artifacts\QYPlayer-1.0.1-win-x64\`（253.9 MB，关键文件校验 7 项通过），启动与关闭均正常（退出码 0）、无崩溃日志。自备模板能被正常解析，说明模板结构与上游语义一致。
+**验证。** 编译 0 警告 0 错误，33 个单元测试全部通过；发布到 `artifacts\QYPlayer-1.0.1-win-x64\`（253.9 MB），启动与关闭均正常（退出码 0）、无崩溃日志。自备模板能被正常解析，说明模板结构与上游语义一致。
+
+### 9.9 单击跳转时灵时不灵的修正
+
+9.8 的第一版把提交挂在「抬起」上，实测仍会时而不灵。复查后确认这是一个与引擎回包赛跑的竞态，与事件是否挂上无关。
+
+**竞态的形成。** 单击轨道要经历「按下 → 抬起」两个事件。按下时 Slider 把 `Value` 设成点击处的位置，绑定随即写入 `PositionSeconds`；而引擎的位置回调约每 250ms 一次、经 `SynchronizationContext` 异步投递到 UI 线程。若队列里恰好还压着一条「跳转生效前」的旧位置，它会在按下与抬起之间被处理，把 `PositionSeconds` 覆盖回原处——抬起时提交的就成了旧位置。踩中的概率等于这几十毫秒窗口内有旧回包到达的概率，因此**按住的时间越长越容易复现**，这正是「时而」的来源。
+
+**两层修正。**
+
+一是**把提交提前到「按下」**，直接消除竞态窗口：不再等抬起，按下瞬间就把位置交给引擎。这里不能沿用 XAML 上的事件挂法——Slider 在 move-to-point 分支里会自行把 `PreviewMouseLeftButtonDown` 置为 `Handled`，而 XAML 挂的处理器默认收不到已处理事件，必须用 `AddHandler(..., handledEventsToo: true)` 注册才能拿到。处理器按视觉树判断事件源是否来自 Thumb：按在圆点上是拖动的起点，交给 `DragStarted → DragCompleted` 收尾，此时不提交，避免与随后的拖动叠加出多余跳转。提交时读控件自身的 `Slider.Value` 而非 ViewModel 的 `PositionSeconds`，因为两者之间隔着绑定层，写值与读值并非同一时刻完成。
+
+二是**加一道「跳转闩」**（`SeekLatch`，放在 Core 便于单测）：提交后记下目标位置，此后引擎回传的位置若离目标还远，就判定为跳转前的旧回包而暂不采用；等引擎真的走到目标附近（容差 1 秒，远大于 250ms 的回调间隔）再撤闩、恢复跟随。之所以必须有容差而不能要求精确相等：回调本身有粒度，不可能正好落在点击的那个毫秒上。同时设了兜底——最多连续抑制 20 次（约合 5 秒），超过就判定跳转未能生效并自行放开。这一条是必需的：若引擎因不支持跳转等原因始终走不到目标附近，闩必须自己松手，否则进度条会永久冻住，比跳转不灵更糟。
+
+**验证。** 编译 0 警告 0 错误；新增 `SeekLatchTests` 7 个用例覆盖「拦掉旧回包 / 到位后恢复跟随 / 容差边界内外 / 迟迟不生效时自动放开 / 重新上闩重置计数 / 手动重置」，连同原有用例共 40 个全部通过。发布到 `artifacts\QYPlayer-1.0.1-win-x64\`（253.9 MB），启动与关闭正常（退出码 0）、无崩溃日志。
 
 ---
 
