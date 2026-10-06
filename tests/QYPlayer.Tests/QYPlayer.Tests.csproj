@@ -15,6 +15,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\QYPlayer.Core\QYPlayer.Core.csproj" />
+    <!--
+      集成测试要真读标签，因此引用元数据实现。
+      曲库持久化（QYPlayer.Data）在 M2-2 落地后再补引用。
+    -->
+    <ProjectReference Include="..\..\src\QYPlayer.Metadata\QYPlayer.Metadata.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,4 @@
+using QYPlayer.Core.Metadata;
 using QYPlayer.Core.Models;
 
 namespace QYPlayer.Metadata;

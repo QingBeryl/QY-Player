@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using QYPlayer.Core.Metadata;
 using QYPlayer.Core.Models;
 using QYPlayer.Core.Playback;
 using QYPlayer.Core.Sources;

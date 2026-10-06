@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using QYPlayer.App.ViewModels;
 using QYPlayer.Audio;
+using QYPlayer.Core.Metadata;
 using QYPlayer.Core.Playback;
 using QYPlayer.Core.Plugins;
 using QYPlayer.Core.Sources;
