@@ -77,11 +77,15 @@ Write-Host "==> 使用 dotnet：$dotnet" -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
 # 生成图标（若缺失）。图标是安装程序与 exe 的资源，必须先于发布存在。
+# 注意这里只做「缺了才补」的兜底：图标是从 Assets\logo.jpg 派生的，
+# 换了品牌源图要显式重跑 python build\make-icon.py，不能指望本脚本代劳——
+# 本脚本无从判断现有的 app.ico 是不是由当前这张源图生成的。
 # ---------------------------------------------------------------------------
 $iconPath = Join-Path $repoRoot 'src\QYPlayer.App\Assets\app.ico'
-if (-not (Test-Path $iconPath)) {
+$logoPath = Join-Path $repoRoot 'src\QYPlayer.App\Assets\app-logo.png'
+if (-not (Test-Path $iconPath) -or -not (Test-Path $logoPath)) {
     Write-Host "==> 生成应用图标" -ForegroundColor Cyan
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'make-icon.ps1')
+    & python (Join-Path $PSScriptRoot 'make-icon.py')
     if ($LASTEXITCODE -ne 0) {
         throw "生成图标失败，退出码 $LASTEXITCODE"
     }

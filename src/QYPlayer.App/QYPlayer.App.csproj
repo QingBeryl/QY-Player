@@ -20,13 +20,27 @@
     <SelfContained>false</SelfContained>
 
     <!--
-      应用图标与 Windows 资源属性。图标由 build\make-icon.ps1 生成，
-      同时作用于 exe、任务栏、开始菜单快捷方式。
+      应用图标与 Windows 资源属性。图标由 build\make-icon.py 从品牌源图
+      （Assets\logo.jpg）派生，同时作用于 exe、任务栏、开始菜单快捷方式与安装程序。
+      注意 ApplicationIcon 走的是 Win32 资源通道，与下面 ItemGroup 里的 Resource
+      是两回事：前者给外壳看，后者给界面里的 WPF 控件看。
     -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyTitle>QY Player</AssemblyTitle>
     <Description>清玉播放器 —— 支持本地音乐播放与加密格式插件扩展的桌面播放器</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      标题栏左侧的品牌标记（MainWindow.xaml 的 TitleBar.Icon）。
+      必须显式声明为 Resource：.NET SDK 的默认通配只把非代码文件收成 None，
+      而 None 既不会嵌进程序集、也不会带上 pack:// 资源地址，
+      XAML 里写 pack://application:,,,/Assets/app-logo.png 就会在运行期解码失败。
+      同时把它从 None 里摘掉，免得同一个文件挂在两种项类型上。
+    -->
+    <Resource Include="Assets\app-logo.png" />
+    <None Remove="Assets\app-logo.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />

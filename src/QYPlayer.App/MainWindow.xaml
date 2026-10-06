@@ -339,10 +339,17 @@
 
           另需注意：Header 与 CenterContent 都是纯文本，不参与拖动窗口，
           只有标题栏空白处可以拖动。
+
+          品牌标记用 {ui:ImageIcon} 换成程序自己的 logo，而不是原来的音符符号：
+          标题栏上的那个位置代表「这个程序是谁」，符号图标与此职责不符。
+          路径写成 pack://application:,,,/Assets/app-logo.png 而不是相对路径，
+          因为这里是标记扩展、在解析期求值，相对路径会相对 XAML 所在的程序集去解析；
+          显式写 pack 形式则指向本程序集内嵌的资源，位置固定。
+          位图由 build\make-icon.py 从品牌源图生成，与 app.ico 同一次量取。
         -->
         <ui:TitleBar Grid.Row="0"
                      Title="QY Player"
-                     Icon="{ui:SymbolIcon MusicNote224}"
+                     Icon="{ui:ImageIcon 'pack://application:,,,/Assets/app-logo.png'}"
                      HorizontalContentAlignment="Center">
             <ui:TitleBar.CenterContent>
                 <TextBlock Text="{Binding StatusText}"
