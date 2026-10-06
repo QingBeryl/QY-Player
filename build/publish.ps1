@@ -1,13 +1,17 @@
-﻿# 发布打包脚本：生成可分发到其他电脑的绿色便捷版与安装版
+﻿# 发布打包脚本：日常只产出可运行目录，确认版本后再归档分发产物
 #
 # 为什么需要它：dotnet publish 的产物会带上一些开发期不需要的东西，
 # 直接压缩发给用户会显得臃肿或产生困惑。本地化资源是主要来源——
 # WPF 会为十几种语言各生成一套附属程序集，合计约 10MB，
 # 而本程序界面完全由自己绘制、文案全部为中文，用不到它们。
 #
-# 产出（均落在 dist\v<版本>\，按版本归档，历史版本不覆盖）：
-#   QYPlayer-<版本>-win-x64.zip        便捷版：解压即用，不写注册表
-#   QYPlayer-<版本>-win-x64-setup.exe  安装版：带向导、开始菜单与卸载
+# 打包分两步，对应 -Target 的不同取值：
+#   第一步（-Target publish，默认）：只把自包含发布产物落到
+#     artifacts\QYPlayer-<版本>-<运行时>\，不压缩、不生成安装包。
+#     目的是让改动立刻能跑起来看效果，日常说「打包」指的就是这一步。
+#   第二步（-Target all）：在第一步的产物之上生成 zip 与 setup.exe，
+#     归档到 dist\v<版本>\，按版本存放，历史版本不覆盖。
+#     这一步直接沿用已发布目录，不重新 publish，因此两步之间不重复劳动。
 #
 # 前提：必须用自包含方式发布。用户机器上通常没有 .NET 10 桌面运行时，
 # 框架依赖型产物拷过去是打不开的。
@@ -21,9 +25,13 @@ param(
     [string]$Dotnet = '',
     # 可选：显式指定 Inno Setup 编译器路径。不传则自动探测。
     [string]$Iscc = '',
-    # 只打包某一项：all / portable / setup。
-    [ValidateSet('all', 'portable', 'setup')]
-    [string]$Target = 'all'
+    # 打包范围：
+    #   publish  —— 只产出 artifacts\ 下的可运行目录（默认，日常「打包」）
+    #   all      —— 在发布目录之上再产出 zip 与 setup.exe 并归档到 dist\
+    #   portable —— 只产出 zip
+    #   setup    —— 只产出 setup.exe（需已有发布目录）
+    [ValidateSet('publish', 'all', 'portable', 'setup')]
+    [string]$Target = 'publish'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,8 +151,11 @@ if ($needPublish) {
 
 # ---------------------------------------------------------------------------
 # 按版本归档。历史版本的产物一律保留，方便回溯与对照。
+# 只有需要产出分发产物时才建这个目录：publish 这一步不碰 dist\，
+# 免得连版本号都还没定就先留下一个空目录。
 # ---------------------------------------------------------------------------
-if (-not (Test-Path $distDir)) {
+$needDist = $Target -in @('all', 'portable', 'setup')
+if ($needDist -and -not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir | Out-Null
     Write-Host "==> 新建版本目录 $distDir" -ForegroundColor Cyan
 }
@@ -245,9 +256,15 @@ Write-Host ""
 Write-Host "==> 完成" -ForegroundColor Green
 $sizeMb = [math]::Round(((Get-ChildItem $publishDir -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
 Write-Host "    发布目录：$publishDir  ($sizeMb MB)"
-Write-Host "    版本目录：$distDir"
-Get-ChildItem $distDir | Sort-Object Name | ForEach-Object {
-    Write-Host ("    - {0}  ({1} MB)" -f $_.Name, [math]::Round($_.Length / 1MB, 1))
+if ($needDist) {
+    Write-Host "    版本目录：$distDir"
+    Get-ChildItem $distDir | Sort-Object Name | ForEach-Object {
+        Write-Host ("    - {0}  ({1} MB)" -f $_.Name, [math]::Round($_.Length / 1MB, 1))
+    }
+} else {
+    # publish 这一步只产出可运行目录，提示下一步怎么走，免得使用者以为漏了东西。
+    Write-Host "    仅产出可运行目录（未生成 zip 与安装包）。" -ForegroundColor DarkGray
+    Write-Host "    确认版本号后执行：build\publish.ps1 -Target all" -ForegroundColor DarkGray
 }
 Write-Host ""
 
