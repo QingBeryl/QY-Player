@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using QYPlayer.App.ViewModels;
+using Wpf.Ui.Appearance;
+using Wpf.Ui.Controls;
 
 namespace QYPlayer.App;
 
@@ -14,7 +16,7 @@ namespace QYPlayer.App;
 /// 这里刻意不写业务逻辑：凡是能放进 ViewModel 的都放进去，
 /// 代码隐藏只保留必须有窗口引用才能做的事。
 /// </remarks>
-public partial class MainWindow : Window
+public partial class MainWindow : FluentWindow
 {
     public MainWindow()
     {
@@ -26,7 +28,31 @@ public partial class MainWindow : Window
     /// <summary>
     /// 窗口显示后把焦点交给窗口本身，否则空格快捷键会被初始聚焦的按钮吃掉。
     /// </summary>
-    private void OnWindowLoaded(object sender, RoutedEventArgs e) => Focus();
+    /// <remarks>
+    /// 同时开启系统主题跟随：系统在深色与浅色之间切换时，
+    /// WPF UI 会重刷主题字典与窗口材质，界面无需自己监听。
+    /// </remarks>
+    private void OnWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        Focus();
+
+        // 必须在窗口 Loaded 之后调用，否则取不到窗口句柄。
+        // 传入的材质与 XAML 上的 WindowBackdropType 保持一致。
+        SystemThemeWatcher.Watch(this, WindowBackdropType.Mica);
+    }
+
+    /// <summary>
+    /// 窗口关闭前解除主题监听，避免钩子悬挂在已销毁的窗口上。
+    /// </summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        if (IsLoaded)
+        {
+            SystemThemeWatcher.UnWatch(this);
+        }
+
+        base.OnClosed(e);
+    }
 
     private void OnWindowDragOver(object sender, DragEventArgs e)
     {

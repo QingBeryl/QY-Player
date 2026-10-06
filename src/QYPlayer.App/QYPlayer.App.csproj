@@ -31,6 +31,12 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <!--
+      Fluent 风格的控件、主题与窗口材质。选它而不是手写控件模板，
+      原因见 REQUIREMENTS.md 的 8.3：深色/浅色主题、沉浸式标题栏、
+      Mica 材质与标题栏配色同步都是它已经解决的问题。
+    -->
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
   </ItemGroup>
 
   <ItemGroup>

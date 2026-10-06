@@ -11,6 +11,7 @@ using QYPlayer.Core.Playback;
 using QYPlayer.Core.Plugins;
 using QYPlayer.Core.Sources;
 using QYPlayer.Metadata;
+using Wpf.Ui.Appearance;
 
 namespace QYPlayer.App;
 
@@ -47,6 +48,12 @@ public partial class App : Application
         }
 
         AttachGlobalExceptionHandlers();
+
+        // 启动时先按系统主题刷新一次字典。
+        // 不能只依赖窗口里的 SystemThemeWatcher.Watch：那个调用发生在 Loaded 之后，
+        // 此时窗口已处于已加载状态，其内部的「首次注册才应用系统主题」分支不会走到，
+        // 结果就是 App.xaml 里的初始主题（Dark）一直生效，不跟随系统。
+        ApplicationThemeManager.ApplySystemTheme();
 
         var mainWindow = new MainWindow
         {

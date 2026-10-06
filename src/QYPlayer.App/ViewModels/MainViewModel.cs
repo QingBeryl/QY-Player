@@ -7,6 +7,7 @@ using QYPlayer.Core.Models;
 using QYPlayer.Core.Playback;
 using QYPlayer.Core.Sources;
 using QYPlayer.Metadata;
+using Wpf.Ui.Controls;
 
 namespace QYPlayer.App.ViewModels;
 
@@ -124,12 +125,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// 之所以不用 XAML 触发器，是因为要同时看静音状态和音量值才能决定画哪个图标，
     /// 单靠属性触发器表达不了这种组合，而本地值又会压住样式触发器导致图标恒定不变。
     /// </remarks>
-    public string VolumeGlyph => VolumeIconSelector.Select(Volume, IsMuted) switch
+    public SymbolRegular VolumeSymbol => VolumeIconSelector.Select(Volume, IsMuted) switch
     {
-        VolumeIconLevel.Muted => "\uE74F",  // Mute：喇叭带叉
-        VolumeIconLevel.Low => "\uE993",    // Volume1：一格
-        VolumeIconLevel.Medium => "\uE994", // Volume2：两格
-        _ => "\uE995",                      // Volume3：三格
+        VolumeIconLevel.Muted => SymbolRegular.SpeakerMute24,
+        VolumeIconLevel.Low => SymbolRegular.Speaker024,
+        VolumeIconLevel.Medium => SymbolRegular.Speaker124,
+        _ => SymbolRegular.Speaker224,
     };
 
     /// <summary>音量的文字说明，用于提示条。</summary>
@@ -142,7 +143,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         : $"音量 {Volume}%";
 
     /// <summary>主播放键的图标：播放中显示暂停条，否则显示播放三角。</summary>
-    public string PlayPauseGlyph => IsPlaying ? "\uE769" : "\uE768";
+    public SymbolRegular PlayPauseSymbol => IsPlaying ? SymbolRegular.Pause24 : SymbolRegular.Play24;
 
     /// <summary>主播放键的提示文字，随状态在「播放」与「暂停」之间切换。</summary>
     public string PlayPauseHint => IsPlaying ? "暂停 (空格)" : "播放 (空格)";
@@ -233,7 +234,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         // 图标的格数、提示文字都跟着音量走，必须显式通知，
         // 否则只更新了滑块位置，喇叭图标还停在上一个档位。
-        OnPropertyChanged(nameof(VolumeGlyph));
+        OnPropertyChanged(nameof(VolumeSymbol));
         OnPropertyChanged(nameof(VolumeText));
 
         if (_isUpdatingFromEngine)
@@ -246,13 +247,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnIsMutedChanged(bool value)
     {
-        OnPropertyChanged(nameof(VolumeGlyph));
+        OnPropertyChanged(nameof(VolumeSymbol));
         OnPropertyChanged(nameof(VolumeText));
     }
 
     partial void OnIsPlayingChanged(bool value)
     {
-        OnPropertyChanged(nameof(PlayPauseGlyph));
+        OnPropertyChanged(nameof(PlayPauseSymbol));
         OnPropertyChanged(nameof(PlayPauseHint));
     }
 

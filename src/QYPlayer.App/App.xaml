@@ -1,11 +1,24 @@
 <Application x:Class="QYPlayer.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:QYPlayer.App">
+             xmlns:local="clr-namespace:QYPlayer.App"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
     <!--
       刻意不使用 StartupUri：主窗口需要从依赖注入容器取得 ViewModel，
       因此由 App.OnStartup 手动创建并注入 DataContext。
     -->
+    <!--
+      WPF UI 的主题字典必须挂在应用级资源上，否则：
+      UiApplication 会因为找不到 wpf.ui 来源的字典而认为当前不是 WPF UI 应用，
+      ApplicationThemeManager 也就无法替换主题字典，切换深浅色会静默失效。
+      这里的 Theme 只是初始值，运行时由 ThemeService 覆盖。
+    -->
     <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemesDictionary Theme="Dark" />
+                <ui:ControlsDictionary />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>
