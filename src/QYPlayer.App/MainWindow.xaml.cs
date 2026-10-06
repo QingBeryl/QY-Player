@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -42,16 +43,23 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// 窗口关闭前解除主题监听，避免钩子悬挂在已销毁的窗口上。
+    /// 窗口关闭过程中解除主题监听，避免钩子悬挂在已销毁的窗口上。
     /// </summary>
-    protected override void OnClosed(EventArgs e)
+    /// <remarks>
+    /// 必须是 OnClosing 而不是 OnClosed。窗口的关闭顺序是
+    /// Closing → 销毁 HWND → Closed，而 OnClosed 是由 WmDestroy 触发的，
+    /// 此时窗口句柄已经没了，SystemThemeWatcher.UnWatch 内部取句柄会失败，
+    /// 抛出 "Could not get window handle." 并在退出时弹出错误框。
+    /// 放到 OnClosing 里，句柄尚在，解除钩子才能正常完成。
+    /// </remarks>
+    protected override void OnClosing(CancelEventArgs e)
     {
         if (IsLoaded)
         {
             SystemThemeWatcher.UnWatch(this);
         }
 
-        base.OnClosed(e);
+        base.OnClosing(e);
     }
 
     private void OnWindowDragOver(object sender, DragEventArgs e)
