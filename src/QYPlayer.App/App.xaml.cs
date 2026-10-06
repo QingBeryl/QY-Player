@@ -67,6 +67,38 @@ public partial class App : Application
 
         MainWindow = mainWindow;
         mainWindow.Show();
+
+        TrimCoverCacheInBackground();
+    }
+
+    /// <summary>
+    /// 启动后在后台把封面缓存收敛到容量上限以内。
+    /// </summary>
+    /// <remarks>
+    /// 放在这里而不是启动路径上的同步调用：缓存是 8.2 定的、用容量约束的可重建数据，
+    /// 收敛它要枚举并删除文件，不该拖慢冷启动（2.3 的目标是 2 秒内可交互）。
+    /// 写入路径本身也会腾空间，因此这一步只针对「上次运行留下超额占用、
+    /// 这次运行又没重新扫描」的情形；失败不影响任何功能。
+    /// </remarks>
+    private void TrimCoverCacheInBackground()
+    {
+        var cache = _host?.Services.GetService<ICoverCache>();
+        if (cache is null)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                cache.Trim();
+            }
+            catch (Exception)
+            {
+                // 缓存清理失败只影响磁盘占用，不应打扰用户，也不应终止进程。
+            }
+        });
     }
 
     private static IHost BuildHost()
