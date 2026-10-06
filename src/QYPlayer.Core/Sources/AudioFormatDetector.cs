@@ -3,7 +3,7 @@ using QYPlayer.Core.Models;
 namespace QYPlayer.Core.Sources;
 
 /// <summary>
-/// 按扩展名判定格式。M1 只用扩展名，M2 接入曲库后再补魔数校验。
+/// 按扩展名判定格式。快速扫描只用扩展名，文件头的魔数校验放到「准备播放」与「解析元数据」两个已注定要读文件的时机（见 8.1）。
 /// </summary>
 public static class AudioFormatDetector
 {

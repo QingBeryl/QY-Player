@@ -16,7 +16,7 @@ namespace QYPlayer.App.ViewModels;
 /// </summary>
 /// <remarks>
 /// M1 阶段的职责范围：打开单个文件、播放控制、进度与音量。
-/// 曲库、播放列表、上一首/下一首在 M2 与 M2.5 接入。
+/// 曲库、播放列表、上一首/下一首在 M2 与 M3 接入（M2 批次划分见需求文档 9.11）。
 ///
 /// 线程约定：播放引擎的事件来自其内部线程，这里统一通过
 /// <see cref="SynchronizationContext"/> 回到 UI 线程再更新可绑定属性，
@@ -413,7 +413,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void OnPlaybackEnded(object? sender, EventArgs e) => Post(() =>
     {
-        // M2.5 接入播放队列后，这里改为自动切下一首。
+        // M2 后半（第 5 步）接入播放队列后，这里改为自动切下一首。
         StatusText = "播放结束";
         IsPlaying = false;
         IsPaused = false;

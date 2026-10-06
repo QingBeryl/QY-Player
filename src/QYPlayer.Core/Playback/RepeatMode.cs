@@ -1,7 +1,7 @@
 namespace QYPlayer.Core.Playback;
 
 /// <summary>
-/// 播放模式。M1 只定义，M2.5 打通曲库后才真正生效。
+/// 播放模式。M1 只定义，M2 后半（第 5 步）打通曲库后才真正生效。
 /// </summary>
 public enum RepeatMode
 {
