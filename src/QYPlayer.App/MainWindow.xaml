@@ -115,15 +115,26 @@
 
         <!--
           标题栏：应用名 + 居中的当前状态 + 右侧三个窗口按钮。
-          Title 走 Header，状态走 CenterContent；两者都是纯 TextBlock，
-          因此这两块区域不参与拖动，仅标题栏空白处可拖动窗口。
+          Title 走 Header，状态走 CenterContent。
+
+          这里必须显式指定 HorizontalContentAlignment：TitleBar 的模板把
+          CenterContent 的 HorizontalAlignment 绑到 HorizontalContentAlignment 上，
+          而该属性继承自 Control 的默认值 Left，且 TitleBar 的样式没有覆盖它。
+          不写的话状态文字会贴着左侧的应用名，看起来像是错位。
+          VerticalContentAlignment 方面，样式给的默认值是 Stretch，
+          因此 TextBlock 还要自己居中，否则文字会顶在标题栏上沿。
+
+          另需注意：Header 与 CenterContent 都是纯文本，不参与拖动窗口，
+          只有标题栏空白处可以拖动。
         -->
         <ui:TitleBar Grid.Row="0"
                      Title="QY Player"
-                     Icon="{ui:SymbolIcon MusicNote224}">
+                     Icon="{ui:SymbolIcon MusicNote224}"
+                     HorizontalContentAlignment="Center">
             <ui:TitleBar.CenterContent>
                 <TextBlock Text="{Binding StatusText}"
                            FontSize="12"
+                           VerticalAlignment="Center"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            TextTrimming="CharacterEllipsis"
                            MaxWidth="420" />
