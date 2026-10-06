@@ -7,10 +7,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using QYPlayer.App.ViewModels;
 using QYPlayer.Audio;
+using QYPlayer.Core.Library;
 using QYPlayer.Core.Metadata;
 using QYPlayer.Core.Playback;
 using QYPlayer.Core.Plugins;
+using QYPlayer.Core.Settings;
 using QYPlayer.Core.Sources;
+using QYPlayer.Data;
+using QYPlayer.Data.Logging;
 using QYPlayer.Metadata;
 using Wpf.Ui.Appearance;
 
@@ -69,10 +73,22 @@ public partial class App : Application
     {
         var builder = Host.CreateApplicationBuilder();
 
+        // 先挂文件日志再挂调试输出：顺序影响的是同一行日志在控制台与文件里的先后，
+        // 不影响可见性。Debug 输出只在附加调试器时有意义，开发期用。
         builder.Logging.ClearProviders();
         builder.Logging.AddDebug();
+        builder.Logging.AddDailyFile(AppPaths.LogDirectory);
 
-        // 插件宿主：M1 阶段解密插件目录为空，因此不会加载任何解密能力。
+        // 设置的构造会读一次文件，因此必须在任何依赖它的注册之前完成。
+        // 把实例取出来在下面直接引用（而不是靠容器再解析一次），是为了让
+        // 「音量初值来自设置」这件事在代码上一眼可见。
+        var settings = new JsonSettingsStore(AppPaths.SettingsFilePath);
+        builder.Services.AddSingleton<ISettingsStore>(settings);
+
+        // 曲库持久化与设置一起属于启动早期基础设施，见需求文档 9.11 的 M2-2。
+        builder.Services.AddLibraryPersistence(AppPaths.LibraryDatabasePath);
+
+        // 插件宿主：解密插件目录默认为空，因此不会加载任何解密能力。
         builder.Services.AddSingleton<IPluginHost>(_ =>
         {
             var host = new PluginHost(AppPaths.PluginDirectory);
@@ -84,6 +100,10 @@ public partial class App : Application
         builder.Services.AddSingleton<IMetadataReader>(sp =>
             new TagLibMetadataReader(sp.GetService<ICoverCache>()));
 
+        // 扫描器无状态，注册为单例即可；它依赖的 IMetadataReader 是抽象，
+        // 因此这里不需要知道标签是用 TagLib 读的。
+        builder.Services.AddSingleton<LibraryScanner>();
+
         builder.Services.AddSingleton<TrackSourceResolver>(sp =>
             new TrackSourceResolver(sp.GetRequiredService<IPluginHost>().LoadedPlugins));
 
@@ -91,6 +111,10 @@ public partial class App : Application
         {
             // 显式指向视频库的原生目录，避免打包后探测失败。
             NativeLibraryDirectory = Path.Combine(AppPaths.BaseDirectory, "libvlc", "win-x64"),
+
+            // 音量初值取自设置：F2 要求音量能记忆，而引擎构造时就要一个初值。
+            // 设置文件缺失或损坏时这里拿到的是默认值 60，与原写死的行为一致。
+            InitialVolume = settings.Current.Volume,
 
             // 安装到 Program Files 时程序目录不可写，无法建立 portable 目录，
             // 此时只能让 libVLC 用它的默认位置，否则初始化会因权限失败。

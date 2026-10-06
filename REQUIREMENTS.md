@@ -2,7 +2,7 @@
 
 > 版本 v0.8（方案已确认）
 > 日期：2026-10-06
-> 状态：**M0、M1 已完成并通过验证**；界面已提前迁移到 WPF UI（含滑动条外观与单击跳转的两轮修正，见 9.8、9.9）。当前正在推进 M2（曲库扫描与持久化），**M2-1 扫描器已完成**（见 9.12），批次划分见 9.11。
+> 状态：**M0、M1 已完成并通过验证**；界面已提前迁移到 WPF UI（含滑动条外观与单击跳转的两轮修正，见 9.8、9.9）。当前正在推进 M2（曲库扫描与持久化），**M2-1 扫描器、M2-2 落库与设置均已完成**（见 9.12、9.13），批次划分见 9.11。
 > 当前可分发版本：**v1.0.2**（便捷版 zip + 安装版 setup.exe，见 9.3；本次归档记于 9.4）。
 > 进度明细见第九章，提交与打包的工作约定见 9.7。
 
@@ -672,7 +672,7 @@ v1 走系统默认设备的共享模式，独占列为后续可选。这件事�
 | M1 播放与元数据 | 已完成 | 覆盖原计划的第 2、3 两步：LibVLCSharp 接入、播放控制齐备、`ITrackSource` 抽象生效、TagLib 元数据与封面可读 |
 | 打包与分发（M1 收尾项） | 已完成 | v1.0.0 起同时产出便捷版与安装版，按版本归档于 `dist\`；内含 9.3 的全套分发约定 |
 | 界面迁移（提前做） | 已完成 | 迁到 WPF UI Fluent 外观，含滑动条外观与单击跳转的两轮修正（见 9.6、9.8、9.9）；已归档为 v1.0.2 |
-| M2 曲库与持久化 | 进行中 | 拆为四个批次，划分见 9.11 |
+| M2 曲库与持久化 | 进行中 | 拆为四个批次，划分见 9.11；M2-1、M2-2 已完成（见 9.12、9.13），余 M2-3 封面缓存淘汰与 M2-4 界面打通 |
 
 命名口径统一说明：「打包与分发」不是独立里程碑，它是 M1 的收尾项（第 2 步的原生库打包验证本就是 M1 的一部分）。此前文档里出现过的「M1.5」即指此项，现统一去掉该编号，避免与 7.4 的「M1 = 第 2–3 步」口径冲突。
 
@@ -725,7 +725,7 @@ v1 走系统默认设备的共享模式，独占列为后续可选。这件事�
 ### 9.4 验证结果
 
 - 解决方案编译：0 个警告、0 个错误。
-- 单元测试：40 个用例全部通过，分布在四个测试类——格式识别与扩展名规范化、静音与音量滑块的联动分支、音量图标分档、跳转闩的抑制与放开。（M2-1 之后总数为 65，见 9.12。）
+- 单元测试：40 个用例全部通过，分布在四个测试类——格式识别与扩展名规范化、静音与音量滑块的联动分支、音量图标分档、跳转闩的抑制与放开。（M2-1 之后总数为 65，见 9.12；M2-2 之后总数为 113，见 9.13。）
 - 端到端播放：使用仓库内的测试 mp3（中文文件名与中文标签）走完整链路，解析出标题「浮生尽·心错」、艺术家「流浪的蛙蛙」、时长约 4 分 05 秒、44100 Hz、320 kbps；播放位置推进到 00:00:02.662，引擎上报时长 00:04:05.745；状态迁移为 Opening → Playing。
 - 便携性：播放后确认 `%APPDATA%\vlc` 未被创建，封面缓存写入 `<程序目录>\portable\art\...`。
 - 安装包全链路：静默安装到临时目录（退出码 0，主程序与 libVLC 就位）→ 启动运行确认进程稳定存活且数据目录正确生成 → 静默卸载（退出码 0）→ 安装目录文件数归零、注册表卸载项已清除。exe 资源信息核对为 `QY Player` / `1.0.0.0`。
@@ -832,7 +832,7 @@ M2 按「先能扫、再能存、再能看、再能连着放」的顺序拆成�
 | 批次 | 范围 | 产出与验收 |
 |------|------|------------|
 | M2-1 扫描器 ✅ | `QYPlayer.Core` 下的两阶段扫描：快速阶段只按扩展名枚举目录，慢速阶段调 `IMetadataReader` 解析标签与时长；坏文件返回 `TrackMetadata.Empty` 而不中断整批；目录递归、扩展名筛选、去重规则定死 | 已完成，见 9.12 |
-| M2-2 落库与设置 | `QYPlayer.Data` 落地 EF Core `DbContext` 与迁移，库文件放 `AppPaths.DatabaseDirectory`，把已引用的 `Microsoft.EntityFrameworkCore.Sqlite` 用起来；`Track` 的计算属性加 `[NotMapped]`；设置按 8.1 存独立 JSON 文件（读写原子性 + 损坏回退）；日志按 8.2 落地自写极简 provider | 内存库与临时库上跑 EF Core 往返测试；设置读写的原子性与坏文件回退有专门用例 |
+| M2-2 落库与设置 ✅ | `QYPlayer.Data` 落地 EF Core `DbContext` 与迁移，库文件放 `AppPaths.DatabaseDirectory`，把已引用的 `Microsoft.EntityFrameworkCore.Sqlite` 用起来；`Track` 的计算属性加 `[NotMapped]`；设置按 8.1 存独立 JSON 文件（读写原子性 + 损坏回退）；日志按 8.2 落地自写极简 provider | 已完成，见 9.13 |
 | M2-3 封面缓存 | `CoverCache` 按 8.2 的结论补上总容量上限淘汰，缓存目录沿用 `AppPaths.CoverCacheDirectory` | 上限触发的淘汰顺序与容量收敛可用测试覆盖，只依赖文件系统 |
 | M2-4 界面与打通 | `MainWindow` 新增虚拟化曲库列表与搜索框，双击走已公开的 `LoadAndPlayAsync`；播放输入换成曲库曲目列表，实现上一首/下一首与播放模式；接入 FileSystemWatcher（8.2：监听负责运行期，启动增量比对兜底，统一按大小加修改时间判断） | 手工验收：扫描真实曲库、列表滚动流畅、双击播放、切歌正确；外部删改文件后列表能自更新 |
 
@@ -866,6 +866,37 @@ M2 按「先能扫、再能存、再能看、再能连着放」的顺序拆成�
 - 格式取扩展名判定值。`TrackMetadata` 不携带格式，而扩展名在快速阶段已算好；若日后发现改名文件导致错判影响播放，`ToTrack` 是唯一的改动点。
 
 **验证。** 编译 0 警告 0 错误；测试从 40 个增至 **65 个**，全部通过。新增两类：`LibraryScannerTests` 与 `LibraryScannerMetadataTests` 用假读取器覆盖目录遍历、去重、坏文件容忍、增量判定与进度报告；`RealAudioIntegrationTests` 用仓库根目录的三个真实音频（1 个 mp3 + 2 个 flac，含中文文件名与中文标签）跑通全链路，样本按 8.5 的约定「存在则跑、不存在则跳过」。另外用一次性命令行程序对照验证真实目录，输出确认：3 个文件全部识别，中文标签无乱码，`.flac` 的 96 kHz / 24 bit 高解析参数与 `.mp3` 的 320 kbps 均正确解析，进度回调 4 次、末次报告 3/3。
+
+---
+
+### 9.13 M2-2 落库与设置（已完成）
+
+按 9.11 落地第二批：把 `QYPlayer.Data` 从空占位变成真实的持久化层，同时把 8.1 定的设置存储与 8.2 定的日志一并落地。这三项都是「启动早期就要用、且一旦定下形状就要付迁移代价」的基础设施，按 8.1 / 8.2 的结论直接实现，不再回退。
+
+**领域层新增抽象（`QYPlayer.Core`）**：`Settings/AppSettings.cs`（用户偏好，含 `Normalize()` 收口非法值）、`Settings/AppTheme.cs`、`Settings/WindowPlacement.cs`、`Settings/ISettingsStore.cs`、`Library/ILibraryStore.cs`。接口留在 Core、实现在 Data，与 `IMetadataReader`、`ITrackSource`、`IPlaybackService` 的处理方式一致。
+
+**曲库落库**：`QYPlayerDbContext` 加迁移（`Migrations/20261006081208_InitialLibrary`），`SqliteLibraryStore` 实现 `ILibraryStore`。几个具体决定：
+
+- 用 `AddDbContextFactory` 而不是 `AddDbContext`。曲库读写都在后台线程（扫描、启动加载），长期共用同一个上下文会让变更跟踪器不断累积实体，也会把并发访问变成必须先加锁的问题；工厂模式每次新建、用完即弃，代价是重建模型映射，换来的是无共享状态。
+- 用 `MigrateAsync` 而不是 `EnsureCreated`。`EnsureCreated` 建出来的库没有迁移历史，日后加一个字段就只能删库重建，用户曲库里的曲目会全丢。
+- 开启 `PRAGMA journal_mode=WAL`，且失败只记日志不抛。扫描期间界面可能正在读列表，默认的回滚日志模式在读写并发时会直接抛「database is locked」；而老旧的 FAT32 分区或网络盘不支持 WAL，退回默认模式仍可正常工作，不该因此挡住启动。
+- `FilePath` 用 `UseCollation("NOCASE")` 加唯一索引。Windows 路径大小写不敏感，扫描器也按 `OrdinalIgnoreCase` 去重，数据库这层必须同口径，否则唯一索引与去重逻辑会互相打架。
+- `Duration` 与 `LastWriteTimeUtc` 存 **Ticks（整数）**。存文本会让 `ORDER BY` 走字符串比较，且 `DateTime` 存文本会丢掉 `Kind`。
+- `Format` 存枚举**字符串名**。存序号的话，日后调整 `AudioFormat` 成员顺序会把老库里的格式解成别的值。
+- 所有方法按**路径**对齐而非按 `Id`。`Id` 只是数据库主键，重新扫描会产出新实例；按 `Id` 对齐等于每次扫描复制整个曲库。更新时逐字段拷贝并保留原 `Id`，因为 `Id` 将来会被播放列表引用。
+- `RemoveMissingAsync` 对空集合特判：SQL 里 `IN ()` 是语法错误，而「一个文件都没扫到」正对应「清空曲库」，是必须支持的情形。
+
+**`Track` 加了 `[NotMapped]`**：`FileName`、`DisplayTitle`、`DisplayArtist`、`DisplayAlbum` 四个计算属性需要 `System.ComponentModel.DataAnnotations.Schema`。不加的后果不是报错而是静默跑偏——EF Core 会把它们当成可写列建进表，然后每次查询拿数据库里的空值覆盖计算结果，列表里的回退逻辑（文件名代替标题等）全部失效。
+
+**设置存储**：`JsonSettingsStore` 按 8.1 的结论存独立 JSON 文件（`data/settings.json`）。写入采用「先写 `.tmp` 再 `File.Move(overwrite)`」保证原子性——设置恰恰是在「窗口关闭」这种随时可能被系统掐断的时机写入的。损坏时退回默认值并把坏文件改名备份为 `.corrupted-yyyyMMddHHmmss`，而不是抛异常也不是删掉：设置是辅助数据，坏了的设置文件不该让播放器启动不了，而备份保留现场供排查。序列化选项刻意用 `WriteIndented`（用户可能自己打开看和改）、`JsonStringEnumConverter`、`UnmappedMemberHandling.Skip`（降级安装时不因陌生键整份失败）、`AllowTrailingCommas` 与 `ReadCommentHandling.Skip`。
+
+**日志落地**：`Logging/` 下 `DailyFileLoggerProvider` + `DailyFileLogger` + `FileLoggerExtensions.AddDailyFile`，按 8.2 的结论自写而非引入 Serilog。按天滚动 `qyplayer-yyyyMMdd.log`、保留 7 天；同步写且 `AutoFlush = true`，不做异步队列——队列会引入「进程退出时队列里的日志丢失」这个新问题，而崩溃前最后一条恰恰是排查时最想看的。多行消息与异常栈压成一行便于按行读取；类别名只留最后一段。写入失败静默丢弃，绝不再抛——调用点遍布各处，抛出去会把正常业务逻辑一起带崩。
+
+**启动接线**：`AppPaths` 新增 `LibraryDatabasePath`（`data/db/library.db`，与 WAL 附带的 `-wal` / `-shm` 一起关在专属目录）与 `SettingsFilePath`（`data/settings.json`）。`App.BuildHost` 挂上文件日志、构造设置存储（设置要先于依赖它的注册完成）、注册曲库持久化，并把 `PlaybackOptions.InitialVolume` 改为取自设置的音量——F2 要求音量能记忆，而引擎构造时就要一个初值。
+
+**验证。** 整个解决方案编译 0 警告 0 错误；测试从 65 个增至 **113 个**，全部通过。新增三类：`SqliteLibraryStoreTests`（临时库文件上的字段逐项往返、`Utc` 与 Ticks 的逐位相等、枚举确实存成字符串名、同路径重复入库是更新而非复制、路径大小写不敏感的唯一性、`RemoveMissingAsync` 的空集合特判、并发入库串行化、读取顺序稳定）；`JsonSettingsStoreTests` 与 `AppSettingsTests`（Save→Load 往返、枚举存名、排过版、损坏 JSON 退回默认并留下 `.corrupted-*` 备份、空文件不算损坏、未知字段不致整份失败、注释与尾随逗号被接受、Save 时顺手收口、保存失败不抛；以及 `Normalize` 的音量夹取、非法枚举、目录去空白去重、无意义窗口尺寸清空等各条收口）；`DailyFileLoggerTests`（目录自动创建、一行一条、多行压平、异常附在同行、级别过滤、类别名截断、过期清理、不碰目录里的其他文件、不可写时不抛异常、Dispose 后不再写、扩展方法能挂进日志构建器）。
+
+测试期间发现并修正一处实现问题：日志写入器原先以 `FileShare.Read` 打开文件，而它在整个进程生命周期内持有该句柄，导致用户在程序运行时用编辑器打开当天日志会被共享冲突挡掉。改为 `FileShare.ReadWrite`——日志只追加，放宽共享没有一致性问题。用例本身也相应改用共享读写的方式读取（`File.ReadAllLines` 以 `FileShare.Read` 打开，与持写句柄的 provider 冲突），使测试口径与真实场景一致。
 
 ---
 

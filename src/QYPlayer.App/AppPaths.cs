@@ -44,6 +44,27 @@ public static class AppPaths
     /// <summary>曲库数据库所在目录。M2 使用。</summary>
     public static string DatabaseDirectory { get; } = Path.Combine(DataDirectory, "db");
 
+    /// <summary>
+    /// 曲库数据库文件。
+    /// </summary>
+    /// <remarks>
+    /// 只有一个库文件，因此直接把文件名写死，不再多一层「文件名从哪来」的间接。
+    /// 放在 <c>data\db\</c> 下而不是 <c>data\</c> 根下，是为了让 SQLite 的
+    /// WAL 模式附带产生的 <c>-wal</c> / <c>-shm</c> 两个文件留在专属目录里，
+    /// 不会和数据目录下别的文件混在一起。
+    /// </remarks>
+    public static string LibraryDatabasePath { get; } = Path.Combine(DatabaseDirectory, "library.db");
+
+    /// <summary>
+    /// 设置文件。按 8.1 的结论存独立 JSON，与曲库解耦。
+    /// </summary>
+    /// <remarks>
+    /// 放在 <c>data\</c> 根下而不是某个子目录：它是用户可能想直接打开看的文件，
+    /// 少一层目录少一次翻找。程序目录可写时它跟着程序目录走，
+    /// 用户把整个绿色版目录拷走，音量与曲库路径这些偏好也一并带走。
+    /// </remarks>
+    public static string SettingsFilePath { get; } = Path.Combine(DataDirectory, "settings.json");
+
     /// <summary>封面缓存目录。</summary>
     public static string CoverCacheDirectory { get; } = Path.Combine(DataDirectory, "covers");
 

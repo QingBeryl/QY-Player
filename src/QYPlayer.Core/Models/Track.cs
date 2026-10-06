@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace QYPlayer.Core.Models;
 
 /// <summary>
@@ -5,8 +7,9 @@ namespace QYPlayer.Core.Models;
 /// </summary>
 /// <remarks>
 /// <see cref="FileName"/>、<see cref="DisplayTitle"/>、<see cref="DisplayArtist"/>、
-/// <see cref="DisplayAlbum"/> 四个是计算属性，落库时需要显式忽略，
-/// 否则 EF Core 会尝试为它们建列（见需求文档 9.11 的 M2-2 批次）。
+/// <see cref="DisplayAlbum"/> 四个是计算属性，已用 <see cref="NotMappedAttribute"/> 排除在映射之外。
+/// 不加这一处的后果不是报错而是静默跑偏：EF Core 会把它们当成可写列建进表里，
+/// 然后每次查询都拿数据库里的空值覆盖计算结果，列表里的回退逻辑（文件名代替标题等）全部失效。
 /// </remarks>
 public sealed class Track
 {
@@ -45,15 +48,19 @@ public sealed class Track
     public string? CoverCachePath { get; set; }
 
     /// <summary>文件名（含扩展名），用于展示与排序。</summary>
+    [NotMapped]
     public string FileName => Path.GetFileName(FilePath);
 
     /// <summary>标签缺失时回退为文件名，避免列表出现空白行。</summary>
+    [NotMapped]
     public string DisplayTitle =>
         string.IsNullOrWhiteSpace(Title) ? Path.GetFileNameWithoutExtension(FilePath) : Title;
 
+    [NotMapped]
     public string DisplayArtist =>
         string.IsNullOrWhiteSpace(Artist) ? "未知艺术家" : Artist;
 
+    [NotMapped]
     public string DisplayAlbum =>
         string.IsNullOrWhiteSpace(Album) ? "未知专辑" : Album;
 }

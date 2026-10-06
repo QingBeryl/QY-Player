@@ -17,9 +17,14 @@
     <ProjectReference Include="..\..\src\QYPlayer.Core\QYPlayer.Core.csproj" />
     <!--
       集成测试要真读标签，因此引用元数据实现。
-      曲库持久化（QYPlayer.Data）在 M2-2 落地后再补引用。
     -->
     <ProjectReference Include="..\..\src\QYPlayer.Metadata\QYPlayer.Metadata.csproj" />
+    <!--
+      曲库与设置的持久化实现（M2-2 落地）。
+      测试要真开一个 SQLite 库文件、真写一次设置文件，才能覆盖迁移、WAL 降级、
+      原子写入与坏文件回退这些只在真实 IO 下才成立的路径。
+    -->
+    <ProjectReference Include="..\..\src\QYPlayer.Data\QYPlayer.Data.csproj" />
   </ItemGroup>
 
   <ItemGroup>
