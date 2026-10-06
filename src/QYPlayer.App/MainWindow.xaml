@@ -93,6 +93,157 @@
             </Setter>
         </Style>
 
+        <!--
+          ===== 滑动条（进度条 / 音量条）共用外观 =====
+
+          WPF UI 自带的 Slider 模板把「已播放 / 已到达」那一段对应的
+          DecreaseRepeatButton 画成了一个完全透明的 Button，
+          于是整条轨道从头到尾都是同一种灰色，看不出播放进度。
+          下面这套模板把它改成强调色，这就是「已播放部分显示为蓝色」的落点。
+
+          为什么不用 AccentFillColorDefaultBrush：这个键在深色主题下取到的是
+          #FF003E92（很深的蓝），压在同为深色的轨道上几乎看不出边界，
+          与「一眼分辨播没播过」的诉求相悖。这里直接取系统强调色的主色调，
+          亮度足够，浅色主题下也依然清晰。
+        -->
+
+        <!-- 已播放侧的蓝色。单独抽成资源，方便一处调色、两条滑块同时生效。 -->
+        <SolidColorBrush x:Key="PlayerSliderPlayedBrush"
+                         Color="{DynamicResource SystemAccentColorPrimary}" />
+
+        <!--
+          为什么整段重写模板而不是只替换某个子样式：
+          Track 会把 DecreaseRepeatButton 的右边缘钉在 Thumb 上，
+          因此它的宽度天然就等于已播放的长度，正是我们要着色的那一段；
+          但它的外观来自模板内部用 StaticResource 指定的样式，
+          外部没有替换的入口，只能自备一份模板。
+          模板其余部分尽量与上游保持一致（轨道 4px、Thumb 20px 圆点），
+          只把已播放侧换成强调色，并补上禁用时的整条淡化。
+        -->
+
+        <!-- 未播放侧：保持透明，让底层的灰色轨道透出来。 -->
+        <Style x:Key="PlayerSliderTransparentSide" TargetType="RepeatButton">
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 已播放侧：蓝色，宽度由 Track 自动算成「轨道左端到 Thumb」。 -->
+        <Style x:Key="PlayerSliderPlayedSide" TargetType="RepeatButton">
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <!--
+                          高度与圆角跟下面的底层轨道对齐，视觉上才是同一条线，
+                          不能让它撑满 Track 给的高度，否则会盖住整个滑块。
+                        -->
+                        <Border Height="4"
+                                VerticalAlignment="Center"
+                                CornerRadius="2"
+                                Background="{DynamicResource PlayerSliderPlayedBrush}" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 滑块圆点：取值沿用 WPF UI，保证与其它控件观感一致。 -->
+        <Style x:Key="PlayerSliderThumb" TargetType="Thumb">
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Width" Value="20" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlElevationBorderBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SliderThumbBackground}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource SliderOuterThumbBackground}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="16">
+                            <Ellipse Width="12" Height="12"
+                                     Fill="{TemplateBinding Foreground}"
+                                     Stroke="Transparent"
+                                     StrokeThickness="0" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+          水平模板：底层灰色轨道 + Track（已播放侧着色）+ Thumb。
+          刻度条（TickBar）省略：本项目不显示刻度，TickPlacement 保持默认 None，
+          上游模板里那两条刻度也一直是 Collapsed。
+
+          中间那一行的 MinHeight 必须留着：它把 Track 所在行撑到控件的最小高度，
+          Thumb（20px）才有地方落座；去掉之后轨道会被压扁成 4px，滑块看不见。
+        -->
+        <ControlTemplate x:Key="PlayerSliderTemplate" TargetType="Slider">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" MinHeight="{TemplateBinding MinHeight}" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border x:Name="TrackBackground"
+                        Grid.Row="1"
+                        Height="4"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource SliderTrackFill}"
+                        BorderThickness="0"
+                        CornerRadius="2" />
+                <Track x:Name="PART_Track" Grid.Row="1">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Command="Slider.DecreaseLarge"
+                                      Style="{StaticResource PlayerSliderPlayedSide}" />
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource PlayerSliderThumb}" />
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Command="Slider.IncreaseLarge"
+                                      Style="{StaticResource PlayerSliderTransparentSide}" />
+                    </Track.IncreaseRepeatButton>
+                </Track>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="TrackBackground" Property="Background"
+                            Value="{DynamicResource SliderTrackFillPointerOver}" />
+                    <Setter TargetName="TrackBackground" Property="Opacity" Value="0.6" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="PlayerSliderStyle" TargetType="Slider">
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="MinWidth" Value="104" />
+            <Setter Property="MinHeight" Value="20" />
+            <Setter Property="Template" Value="{StaticResource PlayerSliderTemplate}" />
+            <Style.Triggers>
+                <!-- 没有曲目时整条淡化，让「不能拖」这件事看得出来。 -->
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.4" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
     </ui:FluentWindow.Resources>
 
     <ui:FluentWindow.InputBindings>
@@ -201,15 +352,21 @@
                            VerticalAlignment="Center" MinWidth="48" />
 
                 <!--
-                  进度条直接用原生 Slider：WPF UI 已为它提供 Fluent 轨道与 Thumb，
-                  自绘模板整段删除，避免与主题资源脱节。
+                  进度条：外观走上面自备的 PlayerSliderStyle（已播放段为蓝色）。
+                  IsMoveToPointEnabled 让单击轨道即可定位，配合 code-behind 里的
+                  OnSeekClick 把值提交给引擎——该属性会吞掉点击、不触发 Thumb 拖拽，
+                  只靠 DragCompleted 提交的话单击是不生效的。
                 -->
                 <Slider x:Name="SeekSlider" Grid.Column="1" Margin="12,0,12,0"
+                        Style="{StaticResource PlayerSliderStyle}"
                         Minimum="0"
                         Maximum="{Binding DurationSeconds}"
                         Value="{Binding PositionSeconds, Mode=TwoWay}"
                         IsEnabled="{Binding HasMedia}"
                         IsMoveToPointEnabled="True"
+                        Cursor="Hand"
+                        PreviewMouseLeftButtonUp="OnSeekClick"
+                        PreviewKeyUp="OnSeekKeyUp"
                         Thumb.DragStarted="OnSeekDragStarted"
                         Thumb.DragCompleted="OnSeekDragCompleted" />
 
@@ -256,6 +413,10 @@
                 <!--
                   静音键与音量滑块合为一组：喇叭图标既显示当前状态、又是静音开关，
                   滑块紧随其后调节音量。
+
+                  与进度条同款外观（已到达一段为蓝色），同样开启单击定位。
+                  音量走的是 OnVolumeChanged 直接写回引擎，不需要额外提交，
+                  因此这里不需要事件处理器。
                 -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource TransportButton}"
@@ -266,8 +427,11 @@
 
                     <Slider Width="130" Margin="10,0,0,0"
                             VerticalAlignment="Center"
+                            Style="{StaticResource PlayerSliderStyle}"
                             Minimum="0" Maximum="100"
                             Value="{Binding Volume, Mode=TwoWay}"
+                            IsMoveToPointEnabled="True"
+                            Cursor="Hand"
                             ToolTip="{Binding VolumeText}" />
                 </StackPanel>
             </Grid>

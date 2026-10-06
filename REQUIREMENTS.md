@@ -1,8 +1,8 @@
 # QY Player（清玉播放器）需求与技术方案
 
-> 版本 v0.6（方案已确认）
+> 版本 v0.7（方案已确认）
 > 日期：2026-10-06
-> 状态：**M0、M1、M1.5 已完成并通过验证**；界面已提前迁移到 WPF UI，产物在 `artifacts\` 待确认版本后归档（见 9.6）。当前正在推进 M2（曲库扫描与持久化）。
+> 状态：**M0、M1、M1.5 已完成并通过验证**；界面已提前迁移到 WPF UI（含滑动条外观与单击跳转的修正，见 9.8），产物在 `artifacts\` 待确认版本后归档（见 9.6）。当前正在推进 M2（曲库扫描与持久化）。
 > 当前可分发版本：**v1.0.1**（便捷版 zip + 安装版 setup.exe，见 9.3）。界面迁移的产物已发布到 `artifacts\`，版本号待定。
 > 进度明细见第九章，提交与打包的工作约定见 9.7。
 
@@ -736,7 +736,7 @@ M2 同时收尾两处遗留：`AssemblyMarker.cs` 目前是空占位，曲库工
 
 **主题资源。** `App.xaml` 挂载 `ThemesDictionary` 与 `ControlsDictionary`。这一步不是装饰性的：`UiApplication` 会检查应用资源里是否存在指向 WPF UI 的合并字典（按 `Source` 里是否含 `wpf.ui;` 判断），缺失时它的构造函数直接返回，后续主题切换全部静默失效。之后把原有 20 余处硬编码色值替换为主题资源键的动态引用（`TextFillColor*`、`AccentFillColor*`、`CardBackgroundFillColor*` 等），并按官方要求统一使用 `DynamicResource` —— 用 `StaticResource` 拿到的刷子在切换主题时不会重新求值。
 
-**控件替换。** 进度条与音量滑块删掉自绘模板，改用 WPF UI 自带的 Slider 外观（含 Fluent 轨道、20×20 圆角 Thumb，以及悬停高亮）。图标由 Segoe MDL2 字形换成 `ui:SymbolIcon`；`MainViewModel` 的 `VolumeGlyph` / `PlayPauseGlyph` 相应改为返回 `SymbolRegular`，属性名改为 `VolumeSymbol` / `PlayPauseSymbol`。
+**控件替换。** 进度条与音量滑块删掉自绘模板，改用 WPF UI 自带的 Slider 外观；图标由 Segoe MDL2 字形换成 `ui:SymbolIcon`；`MainViewModel` 的 `VolumeGlyph` / `PlayPauseGlyph` 相应改为返回 `SymbolRegular`，属性名改为 `VolumeSymbol` / `PlayPauseSymbol`。滑块部分在试用后被发现两个问题并做了二次修正，见 9.8。
 
 **主题跟随。** 启动时调用 `ApplicationThemeManager.ApplySystemTheme()`，窗口 `Loaded` 后注册 `SystemThemeWatcher.Watch(this, WindowBackdropType.Mica)`，系统在深浅色之间切换时界面自动跟随。启动那一处不能省：`SystemThemeWatcher.Watch` 内部的「首次注册才应用系统主题」分支，只在窗口尚未加载时注册才会走到，而它是在 `Loaded` 之后调用的，只靠它会一直停在 `App.xaml` 里声明的初始主题上。
 
@@ -773,6 +773,24 @@ M2 同时收尾两处遗留：`AssemblyMarker.cs` 目前是空占位，曲库工
 第二行留空。第三段是详细描述，**必须写清楚改了什么、为什么这么改**，不能只复述标题。涉及取舍的要说明被放弃的方案及其原因；涉及外部约束（框架行为、系统限制、官方要求）的要写明依据；涉及修复的要指出问题根因。描述用中文，与代码注释的语气保持一致。
 
 **版本号与归档的关系。** 提交与打 tag 是两件事：每次改动都要提交，但只有使用者明确指定版本号时才打 tag 并归档到 `dist\`。「打包」默认指发布到 `artifacts\` 供试运行，确认版本号后才生成分发产物（见 9.3）。
+
+### 9.8 滑动条外观与单击跳转修正
+
+界面迁移后试用，进度条与音量条暴露出两个问题：已播放与未播放两段颜色相同、无法区分；单击轨道不能跳转，只有双击才有反应。两者根因不同，分开处理。
+
+**颜色不分段的根因在 WPF UI 的 Slider 模板。** 上游 `UiHorizontalSlider` 的层级是「底层一个灰色的 `TrackBackground` + 叠在上面的 `Track`」，而 `Track` 的 `DecreaseRepeatButton`（已播放那一段）与 `IncreaseRepeatButton` 都用同一个 `UiSliderButtonStyle`，该样式的模板只有一个 `<Border Background="Transparent" />`。也就是说两段都是透明的，整条轨道只剩底层那层灰，播没播过在视觉上完全一样。
+
+**修法是自备一份模板，而不是替换某个子样式。** `Track` 会把 `DecreaseRepeatButton` 的右边缘钉在 Thumb 上，因此它的宽度天然等于已播放的长度，正是要着色的那一段；但这个控件的样式是在上游模板内部用 `StaticResource` 指定的，外部没有替换入口。因此 `MainWindow.xaml` 里新写了一套 `PlayerSliderStyle`（含 `PlayerSliderTemplate` 与三个子样式），结构与上游保持一致（中间行 `MinHeight="{TemplateBinding MinHeight}"` 撑住 Thumb 的落座空间，轨道 4px、Thumb 沿用 20×20 圆点），只把已播放侧换成蓝色。刻度条（`TickBar`）省略——本项目不显示刻度，上游模板里那两条也一直是 `Collapsed`。
+
+**蓝色的取值不用 `AccentFillColorDefaultBrush`。** 这个键在深色主题下解析为 `#FF003E92`（很深的蓝），压在同为深色的轨道上几乎看不出边界，与「一眼分辨播没播过」的诉求相悖。改取 `SystemAccentColorPrimary`（深色下为 `#FF0067C0`），亮度足够，浅色主题下同样清晰；单独抽成 `PlayerSliderPlayedBrush` 资源，一处调色、两条滑块同时生效。
+
+**单击不跳转的根因是提交路径缺失。** `SeekSlider` 本就开了 `IsMoveToPointEnabled="True"`，但该属性生效时 WPF 会在 `OnPreviewMouseLeftButtonDown` 里算好新值并置 `e.Handled = true`，Thumb 的拖拽因此根本不会启动，`Thumb.DragCompleted` 也就不会触发。而把位置写回引擎的 `CommitSeek` 只挂在 `DragCompleted` 上——于是新值只停在绑定层，引擎下一帧回传的播放位置又把它拽回去，观感就是「点了没反应」。音量条更彻底：它连 `IsMoveToPointEnabled` 都没设，单击完全无效果。
+
+**修法是补一条与拖拽平行的提交路径。** 进度条新增 `PreviewMouseLeftButtonUp` 处理，单击后显式调用 `CommitSeekCommand`。用 Preview（隧道）而非冒泡事件，是因为隧道先于 Thumb 的 `DragCompleted` 到达，拖动滑块松手时这里仍能看到 `IsSeekDragging` 为 `true`，可以干净地让给 `OnSeekDragCompleted` 收尾，避免同一位置提交两次。同理补了 `PreviewKeyUp`：方向键、PageUp / PageDown、Home / End 只改 Slider 的值、不产生拖拽，同样需要显式提交，且只认会改变位置的按键——空格之类落在进度条上时不该触发跳转。音量条不需要额外处理：它的 `OnVolumeChanged` 本身就直写引擎。
+
+**顺带补齐的交互细节。** 两条滑块都加 `Cursor="Hand"`，音量条补上 `IsMoveToPointEnabled="True"`；`PlayerSliderStyle` 增加 `IsEnabled=False` 时整条降至 0.4 不透明度，让「没有曲目时拖不动」这件事看得出来。
+
+**验证。** 编译 0 警告 0 错误，33 个单元测试全部通过；发布到 `artifacts\QYPlayer-1.0.1-win-x64\`（253.9 MB，关键文件校验 7 项通过），启动与关闭均正常（退出码 0）、无崩溃日志。自备模板能被正常解析，说明模板结构与上游语义一致。
 
 ---
 

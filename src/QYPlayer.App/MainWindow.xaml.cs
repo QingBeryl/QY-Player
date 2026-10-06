@@ -99,6 +99,52 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
+    /// 单击进度条后把位置提交给引擎。
+    /// </summary>
+    /// <remarks>
+    /// 为什么需要这一条：进度条开了 IsMoveToPointEnabled，单击轨道时
+    /// Slider 会在 PreviewMouseLeftButtonDown 里算好新值并置 Handled = true，
+    /// Thumb 的拖拽因此根本不会启动，Thumb.DragCompleted 也就不会触发。
+    /// 只靠 DragCompleted 提交的话，新值只停在绑定层，引擎下一帧回传的
+    /// 播放位置又会把它拽回去，表现就是「点了没反应，要双击双击才行」。
+    ///
+    /// 用 Preview 而非冒泡：隧道事件先于 Thumb 的 DragCompleted 到达，
+    /// 于是拖动滑块松手时这里仍能看到 IsSeekDragging 为 true，
+    /// 可以干净地让给 OnSeekDragCompleted 收尾，避免同一位置提交两次。
+    /// </remarks>
+    private void OnSeekClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ViewModel is not { } viewModel || viewModel.IsSeekDragging)
+        {
+            return;
+        }
+
+        viewModel.CommitSeekCommand.Execute(null);
+    }
+
+    /// <summary>
+    /// 用键盘微调进度（方向键、PageUp / PageDown、Home / End）之后提交给引擎。
+    /// </summary>
+    /// <remarks>
+    /// 这些按键只改 Slider 的值，不产生拖拽，同样需要一条显式提交的路径，
+    /// 否则按完键位置会被引擎回传的进度覆盖掉。
+    /// 只认会改变值的按键：空格之类落在进度条上时不该触发跳转。
+    /// </remarks>
+    private void OnSeekKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down
+            or Key.PageUp or Key.PageDown or Key.Home or Key.End))
+        {
+            return;
+        }
+
+        if (ViewModel is { } viewModel)
+        {
+            viewModel.CommitSeekCommand.Execute(null);
+        }
+    }
+
+    /// <summary>
     /// 取拖放进来的第一个音频文件。只接受单个文件，多选时以第一个为准。
     /// </summary>
     private static string? TryGetDroppedFile(DragEventArgs e)
