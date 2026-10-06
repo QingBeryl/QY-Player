@@ -38,6 +38,16 @@ public sealed class AppSettings
     public WindowPlacement Window { get; set; } = new();
 
     /// <summary>
+    /// 左侧曲库栏是否收起。
+    /// </summary>
+    /// <remarks>
+    /// 收起是为了把整窗宽度让给播放区（例如只放歌不看列表时），
+    /// 属于「用户摆好的界面状态」，因此要跨会话记住，
+    /// 否则每次启动都要再收一次。
+    /// </remarks>
+    public bool IsLibraryCollapsed { get; set; }
+
+    /// <summary>
     /// 把字段修正到合法范围。反序列化之后、使用之前必须调用一次。
     /// </summary>
     /// <remarks>

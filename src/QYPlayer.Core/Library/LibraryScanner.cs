@@ -42,6 +42,79 @@ public sealed class LibraryScanner
     }
 
     /// <summary>
+    /// 把「用户交进来的一批路径」展开成有序的音频文件列表。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 服务于「右键用本播放器打开」「双击文件」「拖进来一批东西」这三类入口：
+    /// 它们拿到的都是一串路径，其中可能混着单个文件与整个文件夹，
+    /// 而播放需要的是一份确定的顺序。
+    /// </para>
+    /// <para>
+    /// <b>顺序规则</b>：用户给的顺序优先。显式给出的文件按给出的先后排；
+    /// 目录则就地在它被给出的位置上展开（内部按名称升序，与曲库扫描一致），
+    /// 因此「先拖 A.mp3 再拖一个文件夹」永远先播 A.mp3。
+    /// </para>
+    /// <para>
+    /// 与曲库扫描的差别：这里不做「子目录被父目录覆盖就丢弃」的收敛，
+    /// 而是按最终路径去重——用户同时给了某个文件夹和它里面的一个文件时，
+    /// 那一首只应出现一次，且保留它先出现的位置。
+    /// </para>
+    /// </remarks>
+    /// <param name="paths">文件或目录路径，顺序即播放顺序。</param>
+    /// <param name="cancellationToken">取消标记。</param>
+    /// <returns>去重后的音频文件绝对路径，顺序稳定。</returns>
+    public IReadOnlyList<string> ExpandPaths(
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(path);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                foreach (var file in EnumerateFiles(TrimSeparator(fullPath), cancellationToken))
+                {
+                    if (seen.Add(file.FilePath))
+                    {
+                        result.Add(file.FilePath);
+                    }
+                }
+
+                continue;
+            }
+
+            // 单个文件不做扩展名筛选：用户明确点开的就照播，
+            // 能不能解码交给引擎去判断并给出提示，拦在这里只会让人困惑。
+            if (File.Exists(fullPath) && seen.Add(fullPath))
+            {
+                result.Add(fullPath);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// 第一阶段：遍历给定目录，列出所有受支持的音频文件。
     /// </summary>
     /// <param name="directories">要扫描的根目录。不存在的目录会被跳过而非报错。</param>

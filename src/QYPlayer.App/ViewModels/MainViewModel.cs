@@ -38,6 +38,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly ILibraryStore _libraryStore;
     private readonly LibrarySynchronizer _synchronizer;
     private readonly LibraryWatcher _watcher;
+    private readonly LibraryScanner _scanner;
     private readonly ISettingsStore _settings;
     private readonly ILogger<MainViewModel>? _logger;
     private readonly SynchronizationContext? _uiContext;
@@ -62,6 +63,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ILibraryStore libraryStore,
         LibrarySynchronizer synchronizer,
         LibraryWatcher watcher,
+        LibraryScanner scanner,
         ISettingsStore settings,
         ILogger<MainViewModel>? logger = null)
     {
@@ -71,6 +73,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ArgumentNullException.ThrowIfNull(libraryStore);
         ArgumentNullException.ThrowIfNull(synchronizer);
         ArgumentNullException.ThrowIfNull(watcher);
+        ArgumentNullException.ThrowIfNull(scanner);
         ArgumentNullException.ThrowIfNull(settings);
 
         _playback = playback;
@@ -79,6 +82,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _libraryStore = libraryStore;
         _synchronizer = synchronizer;
         _watcher = watcher;
+        _scanner = scanner;
         _settings = settings;
         _logger = logger;
 
@@ -88,6 +92,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _volume = _playback.Volume;
         _isMuted = _playback.IsMuted;
         _statusText = "正在加载曲库…";
+
+        // 收起状态直接取自设置。这里刻意赋字段而不是走属性 setter：
+        // setter 会触发一次「写设置」的副作用，启动时不该产生这次写盘。
+        _isLibraryCollapsed = _settings.Current.IsLibraryCollapsed;
 
         _queue = new PlayQueue { RepeatMode = _settings.Current.RepeatMode };
 
@@ -136,6 +144,40 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>曲库是否空闲（没有在扫描）。界面据此提示「正在扫描…」。</summary>
     [ObservableProperty]
     private bool _isLibraryBusy;
+
+    /// <summary>
+    /// 左侧曲库栏是否收起。
+    /// </summary>
+    /// <remarks>
+    /// 收起只改变界面占位，不影响曲库本身：扫描、监听、正在播放的曲目都照旧，
+    /// 展开回来还是原来那一份列表。状态写进设置，下次启动保持用户摆好的样子。
+    /// </remarks>
+    [ObservableProperty]
+    private bool _isLibraryCollapsed;
+
+    /// <summary>收起状态的联动文案，让按钮的提示始终说明「点了会怎样」。</summary>
+    public string LibraryCollapseHint => IsLibraryCollapsed ? "展开曲库" : "收起曲库";
+
+    /// <summary>
+    /// 曲库栏是否正在显示。
+    /// </summary>
+    /// <remarks>
+    /// 供界面直接绑定可见性用。写成一个显式的属性而不是给 XAML 加一个
+    /// 「布尔取反再转可见性」的转换器：后者要在每个用到的地方都套一层，
+    /// 而这件事在语义上就是「展开」这一件事，放在这里更好读。
+    /// </remarks>
+    public bool IsLibraryExpanded => !IsLibraryCollapsed;
+
+    /// <summary>
+    /// 收起开关的图标：收起后改成向外的箭头，表示「再点一下就展开」。
+    /// </summary>
+    /// <remarks>
+    /// 图标交给 ViewModel 决定而不是用两个按钮互相切换可见性：
+    /// 后者的写法要维护两份几乎相同的标记，且切换瞬间可能出现两个都不可见。
+    /// </remarks>
+    public SymbolRegular LibraryCollapseSymbol => IsLibraryCollapsed
+        ? SymbolRegular.PanelLeftExpand24
+        : SymbolRegular.PanelLeftContract24;
 
     /// <summary>当前是否处于「可暂停」状态，用于按钮启用逻辑。</summary>
     [ObservableProperty]
@@ -249,17 +291,106 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var dialog = new OpenFileDialog
         {
             Title = "选择音频文件",
+
+            // 多选是明确需求：用户一次挑好几首时，应当按挑的顺序连着播，
+            // 而不是只播第一首、剩下的还得再打开一次。
+            Multiselect = true,
             Filter = BuildAudioFilter(),
             CheckFileExists = true,
-            Multiselect = false,
         };
 
-        if (dialog.ShowDialog() != true)
+        if (dialog.ShowDialog() != true || dialog.FileNames is not { Length: > 0 } files)
         {
             return;
         }
 
-        await LoadAndPlayAsync(dialog.FileName);
+        await PlayPathsAsync(files);
+    }
+
+    /// <summary>
+    /// 「用本播放器打开一批文件 / 文件夹」的统一入口。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 打开文件对话框、拖放、命令行参数、右键「打开方式」四个入口拿到的都是
+    /// 一串路径（可能混着文件与文件夹），最终都收敛到这里，
+    /// 保证四种入口的播放顺序规则完全一致。
+    /// </para>
+    /// <para>
+    /// <b>顺序</b>由 <see cref="LibraryScanner.ExpandPaths"/> 决定：用户给的先后优先，
+    /// 文件夹就地在它被给出的位置上按名称升序展开。
+    /// </para>
+    /// <para>
+    /// 展开结果会临时替换播放队列，而不是只播第一首：
+    /// 「一次打开的多个文件与文件夹按顺序播放」要求播完这一首能自然接上下一首，
+    /// 因此队列必须知道这一整批的存在。曲库列表本身不受影响，
+    /// 下次曲库同步时会按曲库内容重建队列。
+    /// </para>
+    /// </remarks>
+    public async Task PlayPathsAsync(IEnumerable<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var files = _scanner.ExpandPaths(paths);
+
+        if (files.Count == 0)
+        {
+            StatusText = "没有可播放的音频文件";
+            return;
+        }
+
+        // 一开始就打上外部队列的标记：读标签要花时间，这期间曲库同步随时可能
+        // 完成一次重建，标记早点落下才能保证那一批的顺序不被中途打散。
+        _isExternalQueue = true;
+
+        var tracks = new List<Track>(files.Count);
+
+        foreach (var file in files)
+        {
+            tracks.Add(await ResolveTrackAsync(file));
+        }
+
+        // 先摆好队列再播第一首：这样播完自动接下一首时，
+        // 队列里已经有下一首的位置，切歌不会退回曲库里的顺序。
+        _queue.SetTracks(tracks);
+        OnPropertyChanged(nameof(CurrentIndex));
+
+        await PlayAtAsync(0);
+    }
+
+    /// <summary>
+    /// 取一首曲目的元数据：曲库里已有的直接复用，否则现场读标签。
+    /// </summary>
+    /// <remarks>
+    /// 复用曲库条目是有意义的：它带着缓存好的封面路径，
+    /// 重新读一遍标签会重复计算封面，列表里几万首时这笔开销不小。
+    /// 元数据读取失败不阻止播放，交给引擎报错即可（例如加密格式未装插件）。
+    /// </remarks>
+    private async Task<Track> ResolveTrackAsync(string filePath)
+    {
+        foreach (var known in _trackItems)
+        {
+            if (string.Equals(known.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return known;
+            }
+        }
+
+        var metadata = await _metadataReader.ReadAsync(filePath);
+
+        return new Track
+        {
+            FilePath = filePath,
+            Title = metadata.Title,
+            Artist = metadata.Artist,
+            Album = metadata.Album,
+            Duration = metadata.Duration,
+            Format = AudioFormatDetector.FromPath(filePath),
+            SampleRate = metadata.SampleRate,
+            BitsPerSample = metadata.BitsPerSample,
+            Bitrate = metadata.Bitrate,
+            CoverCachePath = metadata.CoverCachePath,
+        };
     }
 
     /// <summary>
@@ -289,23 +420,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             StatusText = "正在读取文件信息…";
 
-            var metadata = await _metadataReader.ReadAsync(filePath);
-
-            var track = new Track
-            {
-                FilePath = filePath,
-                Title = metadata.Title,
-                Artist = metadata.Artist,
-                Album = metadata.Album,
-                Duration = metadata.Duration,
-                Format = AudioFormatDetector.FromPath(filePath),
-                SampleRate = metadata.SampleRate,
-                BitsPerSample = metadata.BitsPerSample,
-                Bitrate = metadata.Bitrate,
-                CoverCachePath = metadata.CoverCachePath,
-            };
-
-            await _playback.PlayAsync(track);
+            await _playback.PlayAsync(await ResolveTrackAsync(filePath));
         }
         catch (Exception ex)
         {
@@ -323,6 +438,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             return;
         }
+
+        // 从列表点歌意味着用户回到了「按曲库顺序听」这件事上，
+        // 之前那批临时打开的文件队列就此交还（见 RestoreLibraryQueue）。
+        RestoreLibraryQueue();
 
         await LoadAndPlayAsync(track.FilePath);
     }
@@ -370,6 +489,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(RepeatSymbol));
         OnPropertyChanged(nameof(RepeatHint));
+    }
+
+    /// <summary>
+    /// 收起 / 展开左侧曲库栏。
+    /// </summary>
+    /// <remarks>
+    /// 状态属于「用户摆好的界面」，改了立刻存盘，下次启动保持同一布局。
+    /// </remarks>
+    [RelayCommand]
+    private void ToggleLibraryCollapse() => IsLibraryCollapsed = !IsLibraryCollapsed;
+
+    partial void OnIsLibraryCollapsedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsLibraryExpanded));
+        OnPropertyChanged(nameof(LibraryCollapseHint));
+        OnPropertyChanged(nameof(LibraryCollapseSymbol));
+
+        _settings.Current.IsLibraryCollapsed = value;
+        _settings.Save();
     }
 
     /// <summary>曲库扫描期间用于显示进度。</summary>
@@ -495,6 +633,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>
     /// 把同步结果换成界面列表。保留当前正在播放的那一首的队列位置。
     /// </summary>
+    /// <remarks>
+    /// 若当前播放的是「从外面打开的一批文件」，队列就<b>不</b>跟着曲库重建：
+    /// 那一批的播放顺序是用户当时点选的顺序，曲库同步没有理由把它打散。
+    /// 这一点在启动时尤其重要——双击文件启动时，应用会同时开始加载曲库，
+    /// 若这里照常重建，刚打开的那一批在几百毫秒后就会被曲库顺序顶掉。
+    /// </remarks>
     private void ApplyTracks(IReadOnlyList<Track> tracks)
     {
         var currentPath = _playback.CurrentTrack?.FilePath ?? _queue.Current?.FilePath;
@@ -505,11 +649,40 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _trackItems.Add(track);
         }
 
-        // 队列按新列表重建，但当前曲目按路径重新定位：
-        // 刷新不该让「正在播的是哪一首」丢失，否则切下一首会跳回开头。
-        _queue.SetTracks(tracks, currentPath);
+        if (!_isExternalQueue)
+        {
+            // 队列按新列表重建，但当前曲目按路径重新定位：
+            // 刷新不该让「正在播的是哪一首」丢失，否则切下一首会跳回开头。
+            _queue.SetTracks(tracks, currentPath);
+        }
 
         ApplyFilter();
+        OnPropertyChanged(nameof(CurrentIndex));
+    }
+
+    /// <summary>
+    /// 是否正在播放「从外面打开的一批文件 / 文件夹」。
+    /// </summary>
+    /// <remarks>
+    /// 这一批的队列是临时的：它只服务于「一次打开的东西按顺序播完」。
+    /// 用户一旦从曲库列表里点歌、或往曲库里加文件夹，
+    /// 队列就该交还给曲库顺序（见 <see cref="RestoreLibraryQueue"/>）。
+    /// </remarks>
+    private bool _isExternalQueue;
+
+    /// <summary>把队列交还给曲库顺序。仅在外部队列生效时有动作。</summary>
+    private void RestoreLibraryQueue()
+    {
+        if (!_isExternalQueue)
+        {
+            return;
+        }
+
+        _isExternalQueue = false;
+
+        // 按路径重新定位当前曲目：它可能不在曲库里，那么下标退回 -1，
+        // 界面上不高亮任何一行，与「这首不在曲库中」的事实一致。
+        _queue.SetTracks(_trackItems, _playback.CurrentTrack?.FilePath);
         OnPropertyChanged(nameof(CurrentIndex));
     }
 
@@ -619,6 +792,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         // 曲库目录属于设置的一部分，改了要立刻存盘，否则下次启动又没了。
         _settings.Current.LibraryFolders = [.. _libraryFolders];
         _settings.Save();
+
+        // 加入了新曲库文件夹，说明用户接下来要按曲库听，
+        // 之前那批临时打开的文件队列可以交还了。
+        RestoreLibraryQueue();
 
         IsLibraryBusy = true;
         StatusText = "正在扫描曲库…";

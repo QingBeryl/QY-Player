@@ -190,21 +190,77 @@ public partial class MainWindow : FluentWindow
         base.OnClosed(e);
     }
 
+    /// <summary>
+    /// 播放一批「从外部交过来」的路径。
+    /// </summary>
+    /// <remarks>
+    /// 入口有两条：本进程启动时的命令行参数（双击文件、右键「打开方式」、
+    /// 一次选中多个文件与文件夹拖到 exe 上），以及第二个实例转发过来的路径。
+    /// 两条都走这里，最终交给 ViewModel 的同一套顺序规则。
+    ///
+    /// 用火忘方式启动：调用方是外壳与管道线程，不该被读标签这一步拖住。
+    /// 失败路径在 ViewModel 内部已转成状态提示。
+    /// </remarks>
+    public void PlayExternalPaths(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0 || ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        _ = viewModel.PlayPathsAsync(paths);
+    }
+
     private void OnWindowDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = TryGetDroppedFile(e) is null ? DragDropEffects.None : DragDropEffects.Copy;
+        e.Effects = TryGetDroppedPaths(e) is null ? DragDropEffects.None : DragDropEffects.Copy;
         e.Handled = true;
     }
 
     private async void OnWindowDrop(object sender, DragEventArgs e)
     {
-        var filePath = TryGetDroppedFile(e);
-        if (filePath is null || ViewModel is not { } viewModel)
+        var paths = TryGetDroppedPaths(e);
+
+        if (paths is null || ViewModel is not { } viewModel)
         {
             return;
         }
 
-        await viewModel.LoadAndPlayAsync(filePath);
+        // 拖进来的可能是好几个文件、一个文件夹，或两者混在一起。
+        // 顺序如何确定、目录怎么展开，统一交给 ViewModel，
+        // 以便与「打开文件对话框」「命令行参数」「右键打开」走同一套规则。
+        // 拖放落点可能在播放区的空白处，标记已处理避免触发其它默认行为。
+        e.Handled = true;
+
+        await viewModel.PlayPathsAsync(paths);
+    }
+
+    /// <summary>
+    /// 取拖放进来的全部路径（文件与文件夹皆可）。
+    /// </summary>
+    /// <remarks>
+    /// <c>FileDrop</c> 提供的字符串数组本身就保留了用户的选取顺序，
+    /// 这里原样往下传，不做排序，也不丢掉目录——
+    /// 「一次拖进来的东西按顺序播放」正是靠这个顺序实现的。
+    /// 只接受存在的东西：拖到的是浏览器里的链接或纯文本时，数组里可能是无效路径。
+    /// </remarks>
+    private static string[]? TryGetDroppedPaths(DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return null;
+        }
+
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
+        {
+            return null;
+        }
+
+        var existing = paths
+            .Where(path => File.Exists(path) || Directory.Exists(path))
+            .ToArray();
+
+        return existing.Length > 0 ? existing : null;
     }
 
     /// <summary>

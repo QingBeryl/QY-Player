@@ -32,9 +32,32 @@ public partial class App : Application
 {
     private IHost? _host;
 
+    /// <summary>
+    /// 单实例闸门。第二个实例把路径转发给第一个之后自行退出。
+    /// </summary>
+    private SingleInstance? _singleInstance;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // 命令行参数里可能带着资源管理器交过来的文件 / 文件夹
+        //（双击、右键「打开方式」、拖到 exe 图标上、一次选中多个文件）。
+        var startupPaths = FilterExistingPaths(e.Args);
+
+        _singleInstance = new SingleInstance();
+
+        if (!_singleInstance.IsFirstInstance)
+        {
+            // 已经有窗口在跑：把这一批路径递过去，由那个实例负责播放，
+            // 自己立刻退出。这样一次打开多个文件也不会弹出一排窗口。
+            _singleInstance.ForwardToRunningInstance(startupPaths);
+            _singleInstance.Dispose();
+            _singleInstance = null;
+
+            Shutdown(0);
+            return;
+        }
 
         AppPaths.EnsureCreated();
 
@@ -68,7 +91,39 @@ public partial class App : Application
         MainWindow = mainWindow;
         mainWindow.Show();
 
+        // 监听必须在窗口出现之后再开：这些路径最终要落到主窗口上播放，
+        // 窗口还没建好时收到转发只能丢弃。
+        _singleInstance.StartListening(paths => mainWindow.Dispatcher.InvokeAsync(
+            () => mainWindow.PlayExternalPaths(paths)));
+
+        if (startupPaths.Length > 0)
+        {
+            mainWindow.PlayExternalPaths(startupPaths);
+        }
+
         TrimCoverCacheInBackground();
+    }
+
+    /// <summary>
+    /// 从命令行参数里挑出真实存在的文件与文件夹。
+    /// </summary>
+    /// <remarks>
+    /// 不假设参数一定是路径：外壳可能传进来以 <c>-</c> 或 <c>/</c> 开头的开关，
+    /// 也可能传进一个已经被删掉的路径。只把「确实存在的东西」往下传，
+    /// 免得后面为一条无效路径去读标签、报错。
+    /// </remarks>
+    private static string[] FilterExistingPaths(string[] args)
+    {
+        if (args is not { Length: > 0 })
+        {
+            return [];
+        }
+
+        return args
+            .Where(arg => !string.IsNullOrWhiteSpace(arg))
+            .Where(arg => !arg.StartsWith('-'))
+            .Where(arg => File.Exists(arg) || Directory.Exists(arg))
+            .ToArray();
     }
 
     /// <summary>
@@ -238,6 +293,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // 先放掉单实例闸门与会话管道，再收宿主。
+        // 顺序上先做这里：管道监听线程一旦收到新路径就会去调主窗口，
+        // 让它在窗口和播放引擎都还活着的时候停下，避免关窗途中还去碰已释放的对象。
+        _singleInstance?.Dispose();
+        _singleInstance = null;
+
         if (_host is not null)
         {
             // 宿主释放会级联释放播放引擎，进而释放 libVLC。

@@ -974,6 +974,37 @@ M2 的全部四个批次（9.12–9.15）此前一直停在 `artifacts\` 等待�
 
 ---
 
+### 9.17 系统集成与曲库栏收起（已完成，待归档）
+
+本批要解决同一个使用场景下的六件小事：**让这个播放器真正「长在 Windows 上」**——双击音频文件就能用它打开，一次选中多首或整个文件夹也能一次交给它并按顺序播完；同时把列表的「哪首在响」变得一眼可见，并给曲库栏加上收起。
+
+**1）正在播放的律动指示。** 列表项在时长右侧新增三条高低不等的竖条动画（自绘 `Border` + `Storyboard`，见 §3.2 关于图标资源的说明：WPF UI 的 `SymbolRegular` 没有均衡器类图标，靠图标做不出「会动的音符」）。三条的高度、周期、相位各不相同（`From/To` 与 `BeginTime` 分别错开），若完全同步会像一个方块在上下张合而不是均衡器。外框宽度固定为 20，不管有没有在播都占同样位置，指示出现/消失时行内容不会左右跳动。三条同时满足「是本行曲目」且「此刻确实在响」才可见，判定交给 `NowPlayingIndicatorConverter`（`IMultiValueConverter`，三个绑定：行自身、`CurrentTrack`、`IsPlaying`）。`EventTrigger` 挂在 `Loaded` 上而不是一次性启动：列表开了虚拟化、容器会被回收复用，走到 `Loaded` 就重播一次，滚动回来动画自然接上。
+
+**2）曲库栏收起。** 栏头加收起键，图标随状态在 `PanelLeftContract24` / `PanelLeftExpand24` 之间切换（图标由 ViewModel 的 `LibraryCollapseSymbol` 给出；XAML 里必须用 `<ui:SymbolIcon Symbol="{Binding ...}"/>` 元素写法，`{ui:SymbolIcon ...}` 标记扩展的参数在解析期求值，装不下运行时绑定）。**收起不是把左栏宽度改成 0**：那样连「展开」的入口也没了，用户会被卡在收起状态里。因此收起后保留一条 44px 窄条，只放一个展开按钮，让「收起 / 展开」两个方向都有明确的落点。收起状态记进设置的 `IsLibraryCollapsed`，下次启动还原；构造函数里刻意直赋字段而不是走属性 setter，避免启动时就触发一次写盘。宽度由 `LibraryWidthConverter` 给出 340 / 44，绑定目标是容器的 `FrameworkElement.Width`（`double`）——**这里曾经写错过**：转换器一度返回 `GridLength` 而目标要 `double`，绑定类型不匹配导致 `Width` 落回 `NaN`、宽度被内容撑开，340/44 全都不生效；同时没有给 `ColumnDefinition.Width` 绑值，因为 `ColumnDefinition` 不在可视树上、不是 `FrameworkElement`，绑定行为不可靠。
+
+**3）打开文件多选。** `OpenFileDialog` 改 `Multiselect = true`，走 `dialog.FileNames` 交给统一入口 `PlayPathsAsync`。
+
+**4）一次打开的多个文件与文件夹按顺序播放。** 新增 `LibraryScanner.ExpandPaths`，把一串路径展开成有序的音频文件列表：**用户给的顺序优先**，显式给出的文件按给出先后排，目录则就地在它被给出的位置上展开（内部按名称升序，与曲库扫描一致），因此「先拖 A.mp3 再拖一个文件夹」永远先播 A.mp3；按最终路径去重（同一个文件既单独给出又在目录里时只出现一次，保留先出现的位置）。**单个文件不做扩展名筛选**：用户明确点开的就照播，能不能解码交给引擎判断并提示，拦在这里只会让人困惑。播放侧 `PlayPathsAsync` 先把整批 `Track` 摆进队列再播第一首，这样播完自动接下一首时队列里已有下一首的位置，切歌不会退回曲库顺序。
+
+**外部队列保护。** 这里有一个不显眼但会真实伤到人的竞态：启动时曲库同步随时可能完成一次重建，而那批刚打开的曲目还在逐个读标签，若同步先落地就会把用户这一批的顺序顶掉、甚至换成整个曲库。因此 `PlayPathsAsync` **在读标签之前**就置 `_isExternalQueue = true`（读标签要花时间，标记早点落下才守得住），此后 `ApplyTracks` 不再重建队列；用户双击曲库或添加曲库文件夹时调 `RestoreLibraryQueue()` 把队列交还给曲库。
+
+**5）Windows 外壳集成。** 新增 `SingleInstance`：命名互斥体（`Local\` 前缀，作用域限登录会话）判首实例，非首实例把命令行路径经命名管道（逐行、UTF-8 无 BOM、3 秒超时）转发给在跑的那个实例后 `Shutdown(0)`。**为什么必须做**：Windows 外壳在「右键打开方式」「双击文件」「一次选中多个文件」下可能为每个文件各起一个进程，不合并的话一次打开十首歌会看到十个窗口、且只有最后一个在响。客户端失败一律静默——转发不成就意味着这一次「打开」没生效，但让第二个实例再弹错误框只会更吵。`App.OnStartup` 用 `FilterExistingPaths` 从 `e.Args` 里挑出真实存在的文件与文件夹（不假设参数一定是路径：外壳可能传 `-` 开头的开关，也可能传进已删除的路径），首实例在 `mainWindow.Show()` 之后才 `StartListening`，因为路径最终要落到主窗口上播放，窗口没建好时收到转发只能丢弃。拖放也同步改为多路径：`TryGetDroppedPaths` 保留全部文件与目录（过滤不存在的），`OnWindowDrop` 调 `PlayPathsAsync`。
+
+**6）安装脚本的文件关联。** `build\QYPlayer.iss` 新增 `[Registry]` 段与两个安装任务（`assoc` 默认勾选、`defaultassoc` 默认不勾），达成三个效果：右键音频文件 →「打开方式」里能看到 QY Player；勾了「设为默认播放器」后双击直接用本程序打开；多选一批文件或右键一个文件夹也能一次交给本程序按顺序播放。要点：
+
+- **全部只写 HKCU，不写 HKLM**。默认安装是「仅为我安装」（`PrivilegesRequired=lowest`），HKCU 必定可写、不弹 UAC；写 HKLM 会让这种默认安装下的关联静默失败。卸载时也只清自己写的那一份。
+- 每种格式一个 ProgID（`QYPlayer.<扩展名>`），并挂进该扩展名的 `OpenWithProgids`；另写 `Software\Classes\Applications\QYPlayer.exe` 那一组——前者的名字来自 ProgID 默认值，后者才是系统「默认应用」设置页与「始终使用此应用打开」勾选框真正读取的位置，两者缺一不可。
+- 每个 ProgID 带 `MultiSelectModel=Player`：这样按住 Ctrl 多选一批音乐再右键时菜单里才会出现本程序，并把一整批路径交给它。
+- 目录右键写 `Software\Classes\Directory\shell\QYPlayer`，直接对一个文件夹用本程序播放（内部文件按名升序播完）。
+- **加密格式（ncm / kgm / kwm 等）刻意不注册**：它们要靠默认不随主程序分发的解密插件才能播（见 5.4 方案 B），若写成默认关联，用户双击后会得到一个打不开的文件。
+- 勾「设为默认播放器」时还要删 `HKCU\...\Explorer\FileExts\.<ext>\UserChoice`。Win8 起系统把「用户选择的默认程序」记在那里并存了校验值，只要该键还在，我们写在 `Software\Classes` 下的默认值就会被判为「非用户选择」而忽略，双击仍走原程序；删掉它等于把选择权退回系统。这是一次性、可逆的动作，用户可在「默认应用」里改回去。
+
+**验证。** 新增 `LibraryScannerExpandPathsTests` 9 个用例（顺序保持、目录就地展开且内部升序、重复只出现一次、单文件不筛扩展名、目录内只收支持格式、无效路径跳过、空集合、空参数抛异常、取消标记），测试总数 181 → 190，全绿。
+
+**待手工验收**：双击 `artifacts\` 里的 exe 后，右键一个 mp3 看「打开方式」是否有本程序；Ctrl 多选一批音乐右键播放是否在单窗口内按顺序播完；右键一个文件夹是否能直接播；拖入混合的文件与文件夹顺序是否符合给定顺序；列表里正在播的那一行是否出现律动、暂停后是否消失；收起曲库后窄条是否仍在、宽度是否为 44。
+
+---
+
 ## 附：主要参考实现与资料
 
 - Unlock Music（多平台加密格式解密参考实现）[$TRAE_REF](https://gitee.com/masx200/unlock-music)

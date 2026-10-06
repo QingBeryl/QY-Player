@@ -88,6 +88,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "assoc"; Description: "把 QY Player 注册为音频文件的播放器（右键"打开方式"与系统"默认应用"里可选）"; GroupDescription: "系统集成"; Flags: checkedonce
+Name: "defaultassoc"; Description: "同时把 QY Player 设为这些格式的默认播放器（会覆盖当前的默认关联）"; GroupDescription: "系统集成"; Flags: unchecked
 
 [Files]
 ; 打包目录由 publish.ps1 预先精简（已删掉多余语言资源与 C++ 导入库），
@@ -106,6 +108,151 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 [UninstallDelete]
 ; 这里的条目会在"用户选择保留数据"之后照常执行，等于绕过询问，
 ; 所以 data\ 与 portable\ 不能写在这，只能由下面 [Code] 按用户答复决定。
+
+[Registry]
+;
+; ============================== 文件关联 ==============================
+;
+; 达到的三个效果：
+;   1) 资源管理器里右键某个音频文件 →「打开方式」里能看到 QY Player；
+;   2) 勾了"设为默认播放器"后，双击音频文件直接用本程序打开；
+;   3) 多选一批文件、或右键一个文件夹，也能一次交给本程序，按顺序播放。
+;
+; 全部只写 HKCU，不写 HKLM，理由：
+;   - 默认安装是"仅为我安装"（PrivilegesRequired=lowest），HKCU 必定可写，不弹 UAC；
+;     写 HKLM 会让这种默认安装下的关联静默失败。
+;   - 用户切到"为所有用户安装"时 HKCU 依然生效，只是关联对该用户可见，功能不受影响。
+;   - 卸载时只清自己写的那一份，不会误删其他用户或其他播放器的关联。
+;
+; ProgID 统一命名 QYPlayer.<扩展名>，与安装脚本顶部的 AppId 同源，
+; 便于在注册表里一眼认出哪些键是本程序留下的。
+;
+; 加密格式（ncm / kgm / kwm 等）刻意不注册：
+; 它们要靠默认不随主程序分发的解密插件才能播，
+; 若把它们也写成默认关联，用户双击后会得到一个打不开的文件。
+;
+; 「打开方式」候选列表里有一项就够了，为什么还写 Applications\ 那一组：
+; 前者的名字来自 ProgID 的默认值，后者才是系统"默认应用"设置页、
+; 以及"始终使用此应用打开"勾选框真正读取的位置，两者缺一不可。
+;
+; 每个 ProgID 都带 MultiSelectModel=Player：
+; 这样按住 Ctrl 多选一批音乐再右键时，菜单里才会出现本程序，
+; 并把一整批路径交给它（配合单实例转发，最终在一个窗口里按顺序播放）。
+;
+
+; ---------- 1) 每种格式一个 ProgID，并挂进该扩展名的「打开方式」候选 ----------
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.mp3"; ValueType: string; ValueName: ""; ValueData: "MP3 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.mp3"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.mp3\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.mp3\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.mp3\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.mp3"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.flac"; ValueType: string; ValueName: ""; ValueData: "FLAC 无损音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.flac"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.flac\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.flac\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.flac\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.flac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wav"; ValueType: string; ValueName: ""; ValueData: "WAV 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wav"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wav\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wav\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.wav\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.wav"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.m4a"; ValueType: string; ValueName: ""; ValueData: "M4A 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.m4a"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.m4a\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.m4a\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.m4a\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.m4a"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.aac"; ValueType: string; ValueName: ""; ValueData: "AAC 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.aac"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.aac\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.aac\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.aac\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.aac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ogg"; ValueType: string; ValueName: ""; ValueData: "OGG 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ogg"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ogg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ogg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.ogg\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.ogg"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.opus"; ValueType: string; ValueName: ""; ValueData: "Opus 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.opus"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.opus\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.opus\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.opus\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.opus"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wma"; ValueType: string; ValueName: ""; ValueData: "WMA 音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wma"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wma\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.wma\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.wma\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.wma"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ape"; ValueType: string; ValueName: ""; ValueData: "APE 无损音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ape"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ape\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.ape\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.ape\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.ape"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.alac"; ValueType: string; ValueName: ""; ValueData: "ALAC 无损音频"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.alac"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.alac\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\QYPlayer.alac\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.alac\OpenWithProgids"; ValueType: string; ValueName: "QYPlayer.alac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+; ---------- 2) Applications 登记：系统"默认应用"页与"始终使用此应用"读的就是这里 ----------
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppExeName}"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "ApplicationCompany"; ValueData: "{#MyAppPublisher}"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppName}"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".mp3"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".flac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".wav"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".m4a"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".aac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ogg"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".opus"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".wma"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ape"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".alac"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc or defaultassoc
+
+; ---------- 3) 目录右键：直接对一个文件夹用本程序播放（内部文件按名升序播完） ----------
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\QYPlayer"; ValueType: string; ValueName: ""; ValueData: "用 {#MyAppName} 播放"; Flags: uninsdeletekey; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\QYPlayer"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: assoc or defaultassoc
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\QYPlayer\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc or defaultassoc
+
+; ---------- 4) 设为默认播放器（只有勾了该任务才写） ----------
+;
+; 为什么还要删 UserChoice：
+; Win8 起系统把"用户选择的默认程序"记在
+;   HKCU\...\Explorer\FileExts\.<ext>\UserChoice
+; 并给它存了一份校验值。只要这个键还在，我们在 Software\Classes 下写的默认值
+; 就会被系统判定为"非用户选择"而忽略，双击仍然走原来那个程序。
+; 这里把 UserChoice 删掉，等于把选择权退回给系统，让它按我们写的默认值走。
+; 这是一次性、可逆的动作：用户在"默认应用"里改回去即可。
+Root: HKCU; Subkey: "Software\Classes\.mp3"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.mp3"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.flac"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.flac"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.wav"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.wav"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.m4a"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.m4a"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.aac"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.aac"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.ogg"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.ogg"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.opus"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.opus"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.wma"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.wma"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.ape"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.ape"; Flags: uninsdeletevalue; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Classes\.alac"; ValueType: string; ValueName: ""; ValueData: "QYPlayer.alac"; Flags: uninsdeletevalue; Tasks: defaultassoc
+
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mp3\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.flac\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.wav\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.m4a\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.aac\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.ogg\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.opus\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.wma\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.ape\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.alac\UserChoice"; ValueType: none; Flags: deletekey; Tasks: defaultassoc
 
 [Code]
 

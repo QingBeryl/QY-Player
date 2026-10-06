@@ -212,6 +212,152 @@ public class LibraryScannerTests : IDisposable
 }
 
 /// <summary>
+/// 「把用户交进来的一批路径展开成有序播放列表」的用例。
+/// </summary>
+/// <remarks>
+/// 这一层对应「双击文件 / 右键打开方式 / 拖入一批东西」这三类入口，
+/// 用户对顺序是有预期的（他给的顺序就是播放顺序），
+/// 所以除了「收到了什么」，顺序本身也要被断言。
+/// </remarks>
+public class LibraryScannerExpandPathsTests : IDisposable
+{
+    private readonly string _root;
+
+    public LibraryScannerExpandPathsTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "qyplayer-expand-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_root);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+        catch (IOException)
+        {
+            // 清理失败不影响用例结论。
+        }
+    }
+
+    private string Touch(string relativePath, string content = "x")
+    {
+        var fullPath = Path.Combine(_root, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, content);
+
+        // 返回规范化后的路径：展开器内部会用 GetFullPath 统一分隔符，
+        // 这里先统一，断言才能直接比字符串。
+        return Path.GetFullPath(fullPath);
+    }
+
+    private static LibraryScanner CreateScanner() => new(new FakeMetadataReader());
+
+    [Fact]
+    public void 显式给出的文件保持用户给的先后顺序()
+    {
+        var first = Touch("m.mp3");
+        var second = Touch("a.mp3");
+        var third = Touch("z.mp3");
+
+        // 刻意逆着文件名给：结果必须是给出的顺序，而不是按名排序。
+        var files = CreateScanner().ExpandPaths([first, second, third]);
+
+        Assert.Equal([first, second, third], files);
+    }
+
+    [Fact]
+    public void 目录就地在被给出的位置上展开且内部按名升序()
+    {
+        var head = Touch("head.mp3");
+        Touch("album/b.mp3");
+        Touch("album/a.mp3");
+        var tail = Touch("tail.mp3");
+
+        var files = CreateScanner().ExpandPaths([head, Path.Combine(_root, "album"), tail]);
+
+        Assert.Equal(4, files.Count);
+        Assert.Equal(head, files[0]);
+        // 文件夹里的两首按名升序，且整体仍落在「它被给出的位置」上。
+        Assert.Equal(Path.Combine(_root, "album", "a.mp3"), files[1]);
+        Assert.Equal(Path.Combine(_root, "album", "b.mp3"), files[2]);
+        Assert.Equal(tail, files[3]);
+    }
+
+    [Fact]
+    public void 同一个文件既单独给出又在目录里时只出现一次()
+    {
+        var single = Touch("album/a.mp3");
+        Touch("album/b.mp3");
+
+        var files = CreateScanner().ExpandPaths([single, Path.Combine(_root, "album")]);
+
+        Assert.Equal(2, files.Count);
+        // 保留它先出现的位置：单独给出的那次在前。
+        Assert.Equal(single, files[0]);
+    }
+
+    [Fact]
+    public void 单文件不做扩展名筛选()
+    {
+        // 用户明确点开的就照播，能不能解码交给引擎去判断。
+        var exotic = Touch("song.unknown");
+
+        var files = CreateScanner().ExpandPaths([exotic]);
+
+        Assert.Equal([exotic], files);
+    }
+
+    [Fact]
+    public void 目录内只收受支持的扩展名()
+    {
+        Touch("album/a.mp3");
+        Touch("album/b.txt");
+        Touch("album/c.flac");
+
+        var files = CreateScanner().ExpandPaths([Path.Combine(_root, "album")]);
+
+        Assert.Equal(2, files.Count);
+    }
+
+    [Fact]
+    public void 不存在的路径与空字符串被跳过()
+    {
+        var real = Touch("a.mp3");
+
+        var files = CreateScanner().ExpandPaths(
+            ["", "   ", Path.Combine(_root, "ghost.mp3"), real]);
+
+        Assert.Equal([real], files);
+    }
+
+    [Fact]
+    public void 空集合返回空列表()
+    {
+        Assert.Empty(CreateScanner().ExpandPaths([]));
+    }
+
+    [Fact]
+    public void 传入空集合时抛参数异常()
+    {
+        Assert.Throws<ArgumentNullException>(() => CreateScanner().ExpandPaths(null!));
+    }
+
+    [Fact]
+    public void 取消标记生效时立即停止()
+    {
+        Touch("album/a.mp3");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => CreateScanner().ExpandPaths([Path.Combine(_root, "album")], cts.Token));
+    }
+}
+
+/// <summary>
 /// 扫描器的慢速阶段：元数据回填、坏文件容忍与进度报告。
 /// </summary>
 public class LibraryScannerMetadataTests : IDisposable

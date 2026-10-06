@@ -5,6 +5,7 @@
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:models="clr-namespace:QYPlayer.Core.Models;assembly=QYPlayer.Core"
+                 xmlns:conv="clr-namespace:QYPlayer.App.Converters"
                  mc:Ignorable="d"
                  Title="QY Player"
                  Height="700" Width="1120"
@@ -32,6 +33,12 @@
 
         <!-- 空态提示、扫描进度条的可见性都靠布尔取反/转换，这里备好两个转换器。 -->
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <!-- 曲库栏宽度：收起时把宽度让给播放区，只留一条窄条放展开按钮。 -->
+        <conv:LibraryWidthConverter x:Key="LibraryWidth" />
+
+        <!-- 正在播放那一行的律动指示：需要同时看「是不是这一首」与「在不在响」。 -->
+        <conv:NowPlayingIndicatorConverter x:Key="NowPlayingIndicator" />
 
         <!--
           传输控制按钮：圆形底盘 + 悬停/按下反馈。
@@ -113,6 +120,13 @@
 
         <!-- 已播放侧的蓝色。单独抽成资源，方便一处调色、两条滑块同时生效。 -->
         <SolidColorBrush x:Key="PlayerSliderPlayedBrush"
+                         Color="{DynamicResource SystemAccentColorPrimary}" />
+
+        <!--
+          正在播放那一行的律动竖条。与进度条蓝色同源，
+          这样「蓝色 = 正在播放」在本应用里是一致的语义，不需要另学一套配色。
+        -->
+        <SolidColorBrush x:Key="NowPlayingBarBrush"
                          Color="{DynamicResource SystemAccentColorPrimary}" />
 
         <!--
@@ -342,48 +356,97 @@
 
         <Grid Grid.Row="1" Margin="20,14,20,20">
             <Grid.ColumnDefinitions>
-                <!-- 左侧曲库固定宽度：列表是「扫读」用的，宽度稳定比自适应更好用。 -->
-                <ColumnDefinition Width="340" MinWidth="260" />
+                <!--
+                  两列：左侧区域（曲库，或收起后那条窄条）与右侧播放区。
+
+                  左列用 Auto 由内容撑开，内容的 Width 再绑定到转换器所给的
+                  「展开 340 / 收起 44」。之所以绕这一下而不直接给
+                  ColumnDefinition.Width 绑值：ColumnDefinition 不在可视树上，
+                  它不是 FrameworkElement，绑定与转换行为都容易出意外；
+                  绑一个容器的 Width 则是 WPF 里最普通、最稳的用法。
+                -->
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" MinWidth="380" />
             </Grid.ColumnDefinitions>
 
-            <!-- ===================== 左栏：曲库 ===================== -->
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+            <Grid Grid.Column="0"
+                  Width="{Binding IsLibraryCollapsed, Converter={StaticResource LibraryWidth}}">
 
-                <!-- 栏头：标题 + 两个入口按钮 -->
-                <Grid Grid.Row="0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <!--
+                  ===================== 收起后的窄条 =====================
 
-                    <TextBlock Grid.Column="0"
-                               Text="曲库"
-                               FontSize="16"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-
-                    <ui:Button Grid.Column="1"
-                               Content="打开文件"
-                               Icon="{ui:SymbolIcon FolderOpen24}"
-                               Command="{Binding OpenFileCommand}"
-                               ToolTip="打开单个音频文件播放 (Ctrl+O)" />
-
-                    <ui:Button Grid.Column="2"
-                               Margin="8,0,0,0"
-                               Content="添加文件夹"
-                               Appearance="Primary"
-                               Command="{Binding AddLibraryFolderCommand}"
-                               ToolTip="把音乐文件夹加入曲库，之后启动会自动同步" />
+                  收起时留着它，是为了让「展开」这个动作始终有一个明确的落点。
+                  若把左栏整个收成 0 宽，用户就再也找不到展开的入口了。
+                -->
+                <Grid Visibility="{Binding IsLibraryCollapsed, Converter={StaticResource BoolToVisibility}}">
+                    <ui:Button Width="36" Height="36"
+                               Padding="0"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Top"
+                               Command="{Binding ToggleLibraryCollapseCommand}"
+                               ToolTip="展开曲库">
+                        <ui:Button.Icon>
+                            <ui:SymbolIcon Symbol="PanelLeftExpand24" />
+                        </ui:Button.Icon>
+                    </ui:Button>
                 </Grid>
+
+                <!-- ===================== 曲库（展开时） ===================== -->
+                <Grid Visibility="{Binding IsLibraryExpanded, Converter={StaticResource BoolToVisibility}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 栏头：标题 + 收起 + 两个入口按钮 -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="曲库"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+
+                        <!--
+                          收起键放在栏头最左的按钮位，图标随状态切换方向。
+                          图标由 ViewModel 给出，理由见 LibraryCollapseSymbol 的注释。
+
+                          图标用元素写法而不是 {ui:SymbolIcon ...} 标记扩展：
+                          标记扩展的参数在解析期求值，装不下一个运行时绑定，
+                          要绑就得把 SymbolIcon 作为元素写出来。
+                        -->
+                        <ui:Button Grid.Column="1"
+                                   Padding="8,4"
+                                   Command="{Binding ToggleLibraryCollapseCommand}"
+                                   ToolTip="{Binding LibraryCollapseHint}">
+                            <ui:Button.Icon>
+                                <ui:SymbolIcon Symbol="{Binding LibraryCollapseSymbol}" />
+                            </ui:Button.Icon>
+                        </ui:Button>
+
+                        <ui:Button Grid.Column="2"
+                                   Margin="8,0,0,0"
+                                   Content="打开文件"
+                                   Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Command="{Binding OpenFileCommand}"
+                                   ToolTip="打开一个或多个音频文件播放 (Ctrl+O)" />
+
+                        <ui:Button Grid.Column="3"
+                                   Margin="8,0,0,0"
+                                   Content="添加文件夹"
+                                   Appearance="Primary"
+                                   Command="{Binding AddLibraryFolderCommand}"
+                                   ToolTip="把音乐文件夹加入曲库，之后启动会自动同步" />
+                    </Grid>
 
                 <!-- 搜索框：输入即过滤，没有「回车才生效」这一步 -->
                 <ui:TextBox x:Name="SearchBox"
@@ -416,6 +479,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
@@ -436,6 +500,102 @@
                                                Margin="10,0,0,0"
                                                VerticalAlignment="Center"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+
+                                    <!--
+                                      ===== 正在播放的律动指示 =====
+
+                                      放在时长之后、行尾对齐，看起来像列表项的一个「状态徽标」，
+                                      而不是插在标题中间把文字挤歪。
+
+                                      外框宽度固定为 20：不管有没有在播都占着同样的位置，
+                                      指示出现或消失时行内容不会左右跳动，整列文字也就始终对得齐。
+
+                                      三条竖条的高度、快慢、相位各不相同，看起来才像真的在律动；
+                                      若三者完全同步，会像一个方块在上下张合，而不是均衡器。
+                                    -->
+                                    <Border Grid.Column="2"
+                                            Width="20"
+                                            Height="14"
+                                            Margin="4,0,0,0"
+                                            VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal"
+                                                    HorizontalAlignment="Right"
+                                                    VerticalAlignment="Bottom">
+                                            <StackPanel.Visibility>
+                                                <!--
+                                                  三个绑定缺一不可：
+                                                  行自己的数据、当前曲目、以及「此刻是否真的在响」。
+                                                  比较与判定都在转换器里，见 NowPlayingIndicatorConverter。
+                                                -->
+                                                <MultiBinding Converter="{StaticResource NowPlayingIndicator}">
+                                                    <Binding Path="." />
+                                                    <Binding Path="DataContext.CurrentTrack"
+                                                             RelativeSource="{RelativeSource AncestorType=ListView}" />
+                                                    <Binding Path="DataContext.IsPlaying"
+                                                             RelativeSource="{RelativeSource AncestorType=ListView}" />
+                                                </MultiBinding>
+                                            </StackPanel.Visibility>
+
+                                            <!--
+                                              第一根。EventTrigger 挂在 Loaded 上：
+                                              列表开了虚拟化（容器会被回收复用），
+                                              走到这里就重播一次，滚动回来时动画自然接上。
+                                            -->
+                                            <Border Width="3" Height="5" CornerRadius="1.5"
+                                                    VerticalAlignment="Bottom"
+                                                    Background="{DynamicResource NowPlayingBarBrush}">
+                                                <Border.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard RepeatBehavior="Forever">
+                                                                <DoubleAnimation
+                                                                    Storyboard.TargetProperty="Height"
+                                                                    From="5" To="13" Duration="0:0:0.45"
+                                                                    AutoReverse="True" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Border.Triggers>
+                                            </Border>
+
+                                            <!-- 第二根。起得更晚、周期更长，与第一根错开相位。 -->
+                                            <Border Width="3" Height="11" Margin="2,0"
+                                                    CornerRadius="1.5"
+                                                    VerticalAlignment="Bottom"
+                                                    Background="{DynamicResource NowPlayingBarBrush}">
+                                                <Border.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard RepeatBehavior="Forever" BeginTime="0:0:0.18">
+                                                                <DoubleAnimation
+                                                                    Storyboard.TargetProperty="Height"
+                                                                    From="11" To="4" Duration="0:0:0.62"
+                                                                    AutoReverse="True" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Border.Triggers>
+                                            </Border>
+
+                                            <!-- 第三根。给最长的周期，三条合起来才没有「整齐拍点」。 -->
+                                            <Border Width="3" Height="8" CornerRadius="1.5"
+                                                    VerticalAlignment="Bottom"
+                                                    Background="{DynamicResource NowPlayingBarBrush}">
+                                                <Border.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard RepeatBehavior="Forever" BeginTime="0:0:0.33">
+                                                                <DoubleAnimation
+                                                                    Storyboard.TargetProperty="Height"
+                                                                    From="8" To="13" Duration="0:0:0.52"
+                                                                    AutoReverse="True" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Border.Triggers>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -482,6 +642,7 @@
                            TextTrimming="CharacterEllipsis"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                            Text="{Binding ScanProgressText, TargetNullValue='双击列表中的曲目即可播放'}" />
+                </Grid>
             </Grid>
 
             <!-- ===================== 右栏：播放区 ===================== -->
