@@ -88,7 +88,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "assoc"; Description: "把 QY Player 注册为音频文件的播放器（右键"打开方式"与系统"默认应用"里可选）"; GroupDescription: "系统集成"; Flags: checkedonce
+Name: "assoc"; Description: "把 QY Player 注册为音频文件的播放器（右键「打开方式」与系统「默认应用」里可选）"; GroupDescription: "系统集成"; Flags: checkedonce
 Name: "defaultassoc"; Description: "同时把 QY Player 设为这些格式的默认播放器（会覆盖当前的默认关联）"; GroupDescription: "系统集成"; Flags: unchecked
 
 [Files]
